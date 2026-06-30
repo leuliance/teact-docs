@@ -1,10 +1,57 @@
 ---
 title: "@teactjs/storage"
-description: storagePlugin, useStorage, useGlobalStorage, and custom StorageDriver implementations.
+description: storagePlugin, useStorage, useGlobalStorage, and built-in memory / file StorageDriver implementations.
 ---
+
+Persistent key/value storage for Teact bots. Register `storagePlugin` once, then read and write
+state from any component with `useStorage`, or reach the raw driver with `useGlobalStorage`.
+
+## Install
 
 ```bash
 bun add @teactjs/storage
 ```
 
-See [Storage](/docs/guides/storage).
+## Exports
+
+| Export | Kind | Description |
+| ------ | ---- | ----------- |
+| `storagePlugin` | plugin | Registers a storage driver on the bot. |
+| `useStorage` | hook | `useStorage<T>(key, defaultValue)` → `[value, setValue]`, reactive per key. |
+| `useGlobalStorage` | hook | Returns the underlying `StorageDriver` for manual reads/writes. |
+| `MemoryDriver` | class | In-memory driver (default; data is lost on restart). |
+| `FileDriver` | class | JSON-file driver that persists to disk. |
+| `StorageDriver` | type | Interface for writing a custom driver. |
+| `StoragePluginOptions` | type | Options for `storagePlugin`. |
+
+## Register the plugin
+
+The `file` driver's `path` is a **JSON file**, not a directory:
+
+```ts
+// teact.config.ts
+import { defineConfig } from "@teactjs/core";
+import { storagePlugin } from "@teactjs/storage";
+
+export default defineConfig({
+  plugins: [
+    storagePlugin({ driver: "file", path: ".teact/storage.json" }),
+  ],
+});
+```
+
+Use `driver: "memory"` (the default) for ephemeral state during development.
+
+## Read and write state
+
+`useStorage` is reactive per key — updating it re-renders the component:
+
+```tsx
+import { useStorage } from "@teactjs/storage";
+
+const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
+```
+
+The low-level driver from `useGlobalStorage` exposes `get`, `set`, `delete`, `has`, `keys`, and `clear`.
+
+See the [Storage guide](/docs/guides/storage) for custom drivers and patterns.

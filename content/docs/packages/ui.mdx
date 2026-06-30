@@ -1,14 +1,61 @@
 ---
 title: "@teactjs/ui"
-description: Re-exports every component and hook from @teactjs/react under a UI-focused path.
+description: The component layer — Message, keyboards, media, polls, formatting, and data hooks. Re-exports @teactjs/react.
 ---
+
+The UI package is where every Teact component lives. It re-exports `@teactjs/react`, so it is
+functionally **identical** — pick whichever import path fits your codebase. Use it (or `@teactjs/core`,
+which re-exports the same components) for all UI; the engine and hooks come from `@teactjs/core`.
+
+## Install
 
 ```bash
 bun add @teactjs/ui
 ```
 
+## Components
+
 ```tsx
-import { Message, Button, useQuery } from "@teactjs/ui";
+import { Message, Button, InlineKeyboard, ButtonRow } from "@teactjs/ui";
 ```
 
-Functionally **identical** to `@teactjs/react`. Pick whichever import style fits your codebase.
+- **Messaging:** `Message`, `Notification`, `Alert`
+- **Inline keyboards:** `InlineKeyboard`, `ButtonRow`, `Button`, `WebAppButton`
+- **Reply keyboards:** `ReplyKeyboard`, `ReplyRow`, `ReplyButton`, `RequestContactButton`, `RequestLocationButton`, `ReplyKeyboardRemove`
+- **Media:** `Photo`, `Document`, `Video`, `Animation`, `Voice`, `Audio`, `VideoNote`, `Sticker`, `MediaGroup`, `MediaPhoto`, `MediaVideo`
+- **Rich data:** `Poll`, `Contact`, `Location`, `LiveLocation`, `Venue`
+- **Formatting:** `Bold`, `Italic`, `Code`
+- **Layout:** `List`, `ListItem`, `Divider`
+- **Resilience:** `ErrorBoundary`, `SuspenseFallback`
+
+Both flat (`<Bold>`, `<ButtonRow>`) and dot-notation (`<Message.Bold>`, `<InlineKeyboard.Row>`,
+`<Button.WebApp>`, `<List.Item>`) styles work.
+
+## Data hooks
+
+```tsx
+import { useQuery, useMutation } from "@teactjs/ui";
+```
+
+`useQuery` / `useMutation` cover async fetching and writes from within components.
+
+## Example
+
+```tsx
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { useState } from "@teactjs/core";
+
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <Message text={`Count: ${count}`}>
+      <InlineKeyboard>
+        <Button text="-1" onClick={() => setCount((c) => c - 1)} />
+        <Button text="+1" onClick={() => setCount((c) => c + 1)} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+See the [UI components guide](/docs/guides/components) for per-component props.

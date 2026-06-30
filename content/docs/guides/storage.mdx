@@ -10,11 +10,11 @@ import { storagePlugin } from "@teactjs/storage";
 
 storagePlugin({
   driver: "file",
-  path: "./data",
+  path: ".teact/storage.json",
 });
 ```
 
-Drivers: `"memory"` (ephemeral), `"file"` (JSON on disk), or a custom **`StorageDriver`**.
+The `file` driver's `path` is a **JSON file** (not a directory). Drivers: `"memory"` (ephemeral), `"file"` (JSON on disk), or a custom **`StorageDriver`**.
 
 ## useStorage
 

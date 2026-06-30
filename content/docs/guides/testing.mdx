@@ -13,11 +13,13 @@ const adapter = new MockAdapter();
 const bot = createBot({ component: App, adapter, token: "test" });
 await bot.start();
 
-adapter.simulateMessage({ chatId: 1, text: "/start" });
-adapter.simulateCallback({ chatId: 1, data: "ok" });
+// positional args: (chatId, userId, text)
+adapter.simulateMessage("1", "1", "/start");
+adapter.simulateCallback("1", "1", "ok");
 
 adapter.getLastSent();
 adapter.sent;
+adapter.edited;
 adapter.reset();
 ```
 

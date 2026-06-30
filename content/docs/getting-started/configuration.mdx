@@ -13,7 +13,7 @@ import { storagePlugin } from "@teactjs/storage";
 
 export default defineConfig({
   plugins: [
-    storagePlugin({ driver: "file", path: "./data" }),
+    storagePlugin({ driver: "file", path: ".teact/storage.json" }),
   ],
 });
 ```

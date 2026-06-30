@@ -12,14 +12,15 @@ Create `.env` in the project root:
 TELEGRAM_BOT_TOKEN=your_token_here
 ```
 
-The scaffolder may use `TELEGRAM_BOT_TOKEN` or `BOT_TOKEN` depending on the template; align with your `src/index.tsx` imports.
+The token env var is always `TELEGRAM_BOT_TOKEN` — `createBot` reads `process.env.TELEGRAM_BOT_TOKEN` when no explicit `token` is passed.
 
 ## Step 2 — Entry file
 
 A minimal bot wires a **root component** and the **Telegram adapter**:
 
 ```tsx
-import { createBot, Message, Button, InlineKeyboard, useState } from "@teactjs/core";
+import { createBot, useState } from "@teactjs/core";
+import { Message, Button, InlineKeyboard } from "@teactjs/ui";
 import { TelegramAdapter } from "@teactjs/telegram";
 
 function Counter() {

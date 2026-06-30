@@ -1,10 +1,58 @@
 ---
 title: "@teactjs/telegram"
-description: TelegramAdapter and grammY plugins — polling, webhooks, conversations, streaming.
+description: TelegramAdapter plus grammY-powered plugins for conversations and streaming — polling and webhooks.
 ---
+
+The production transport for Teact. `TelegramAdapter` bridges the renderer to the Telegram Bot API
+(via grammY) and supports both polling and webhook modes. The package also ships imperative
+conversation and streaming plugins.
+
+## Install
 
 ```bash
 bun add @teactjs/telegram
 ```
 
-See [Telegram adapter](/docs/guides/telegram-adapter) for setup and [grammY](https://grammy.dev) for advanced bot API usage.
+## Exports
+
+| Export | Kind | Description |
+| ------ | ---- | ----------- |
+| `TelegramAdapter` | class | Adapter passed to `createBot({ adapter })`. |
+| `conversationsPlugin` | plugin | Enables imperative async/await conversation flows. |
+| `defineConversation` | function | Declare a named conversation handler. |
+| `streamPlugin` | plugin | Enables token streaming into a message. |
+| `serializeOutput` | function | Serialize a render tree to a Telegram send payload. |
+| `TelegramAdapterConfig` | type | Adapter options (token, polling, webhook). |
+| `Conversation`, `ConversationHandler`, `ConversationDef` | types | Conversation typings. |
+
+## Polling (default)
+
+`new TelegramAdapter()` reads `TELEGRAM_BOT_TOKEN` from the environment via `createBot`:
+
+```ts
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+
+const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+});
+
+await bot.start();
+```
+
+## Conversations
+
+```ts
+import { conversationsPlugin, defineConversation } from "@teactjs/telegram";
+
+defineConversation("onboarding", async (convo) => {
+  const name = await convo.prompt("What's your name?");
+  await convo.send(`Welcome, ${name}!`);
+});
+
+// plugins: [conversationsPlugin(), ...]
+```
+
+See the [Telegram adapter guide](/docs/guides/telegram-adapter) for polling vs webhook setup, and
+[grammY](https://grammy.dev) for advanced Bot API usage.

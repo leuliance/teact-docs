@@ -1,0 +1,73 @@
+---
+title: Deployment
+description: Build a Teact bot for production and run it with polling or webhooks on a VPS or process manager.
+---
+
+In development you run `teact dev` (HMR). For production you compile once with `teact build` and run
+the bundled output with Bun.
+
+## Build
+
+Scaffolded projects ship these scripts in `package.json`:
+
+```json
+{
+  "scripts": {
+    "dev": "teact dev",
+    "build": "teact build",
+    "start": "bun run dist/index.js"
+  }
+}
+```
+
+Build the project (output goes to `dist/`):
+
+```bash
+bun run build
+```
+
+`teact build` finds your entry (`src/index.tsx` by default) and bundles it. Pass `--entry` to
+override, or `--minify` / `--sourcemap` to tune output.
+
+## Run
+
+Start the compiled bot:
+
+```bash
+bun run start
+# equivalently: bun run dist/index.js
+```
+
+## Environment variables
+
+Set these on the server (export them, or use a `.env` loaded by your host):
+
+- `TELEGRAM_BOT_TOKEN` — required.
+- `PAYMENT_PROVIDER_TOKEN` — only if you use [Payments](/docs/guides/payments).
+
+`new TelegramAdapter()` reads `TELEGRAM_BOT_TOKEN` automatically, so you usually don't pass `token`
+explicitly in production.
+
+## Polling vs webhook
+
+- **Polling** (default) works anywhere with outbound internet — no public URL needed. Run exactly
+  **one** instance per token, or updates will be split between processes.
+- **Webhook** is better for serverless and horizontal scaling: Telegram pushes updates to a public
+  HTTPS URL. Configure `mode: "webhook"` with a `domain`, `port`, `path`, and `secretToken`.
+
+See the [Telegram adapter guide](/docs/guides/telegram-adapter) for the full polling vs webhook
+setup.
+
+## VPS / process manager
+
+On a long-running server, keep the bot alive with a process manager so it restarts on crash or
+reboot. For example with PM2:
+
+```bash
+bun run build
+pm2 start "bun run dist/index.js" --name my-bot
+pm2 save
+```
+
+systemd, Docker, or any supervisor works the same way — build first, then run
+`bun run dist/index.js` as the service command with the env vars set.

@@ -1,0 +1,66 @@
+---
+title: Troubleshooting
+description: Fixes for common Teact issues — teact command not found, a bot that won't respond, and TypeScript/JSX errors.
+---
+
+Quick fixes for the issues you're most likely to hit when starting out. Running `teact doctor`
+inside a project also checks your setup and suggests fixes.
+
+## `teact: command not found`
+
+This means the local `teact` binary in `node_modules/.bin` was never created — almost always because
+`bun install` did not complete successfully.
+
+1. Re-run install from the project root:
+
+   ```bash
+   bun install
+   ```
+
+2. Make sure `@teactjs/cli` is listed in your `package.json` (under `devDependencies` or
+   `dependencies`). The `dev`, `build`, and `start` scripts all rely on it.
+
+3. Make sure you're on the latest release. `bun create teact` always pulls the newest published
+   version:
+
+   ```bash
+   bun create teact my-bot
+   ```
+
+Run scripts through your package manager (`bun dev`, `bun run build`) so the local binary on
+`node_modules/.bin` is used.
+
+## Bot doesn't respond
+
+If the bot starts but never replies to messages:
+
+- **Check the token.** `TELEGRAM_BOT_TOKEN` must be set in `.env` (it is always this name). Confirm
+  there's a real value after the `=`:
+
+  ```bash
+  # .env
+  TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+  ```
+
+- **Only run one polling instance.** Telegram allows a single `getUpdates` consumer per token. If a
+  second `bun dev` (or a deployed instance) is polling the same token, neither will receive updates
+  reliably. Stop the duplicate, or switch one to webhook mode.
+
+- **Send `/start` or a message** to the bot in Telegram, and watch the dev console for incoming
+  updates.
+
+## TypeScript / JSX errors
+
+Teact uses the React JSX runtime. Your `tsconfig.json` needs:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  }
+}
+```
+
+Scaffolded projects include this already. If you see "Cannot use JSX unless the '--jsx' flag is
+provided" or unexpected `JSX.IntrinsicElements` errors, this is the setting to check.

@@ -182,11 +182,18 @@ export default function HomePage() {
               <code>
                 <span className="text-sky-700 dark:text-sky-400/90">import</span>
                 {' { '}
-                <span className="text-cyan-800 dark:text-cyan-200">createBot</span>, <span className="text-cyan-800 dark:text-cyan-200">Message</span>,{' '}
-                <span className="text-cyan-800 dark:text-cyan-200">Button</span>, <span className="text-cyan-800 dark:text-cyan-200">InlineKeyboard</span>
+                <span className="text-cyan-800 dark:text-cyan-200">createBot</span>
                 {' } '}
                 <span className="text-sky-700 dark:text-sky-400/90">from</span>{' '}
                 <span className="text-emerald-700 dark:text-emerald-300/90">&quot;@teactjs/core&quot;</span>;
+                {'\n'}
+                <span className="text-sky-700 dark:text-sky-400/90">import</span>
+                {' { '}
+                <span className="text-cyan-800 dark:text-cyan-200">Message</span>,{' '}
+                <span className="text-cyan-800 dark:text-cyan-200">Button</span>, <span className="text-cyan-800 dark:text-cyan-200">InlineKeyboard</span>
+                {' } '}
+                <span className="text-sky-700 dark:text-sky-400/90">from</span>{' '}
+                <span className="text-emerald-700 dark:text-emerald-300/90">&quot;@teactjs/ui&quot;</span>;
                 {'\n'}
                 <span className="text-sky-700 dark:text-sky-400/90">import</span>
                 {' { '}
