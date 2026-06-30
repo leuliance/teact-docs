@@ -1,0 +1,51 @@
+---
+title: Middleware & plugins
+description: Global middleware on createBot and TeactPlugin for lifecycle, context, and providers.
+---
+
+## Middleware
+
+Runs on every update before rendering. If you omit calling `next`, the runtime can still proceed — simple loggers work without manual `next`.
+
+```ts
+import type { Middleware } from "@teactjs/core";
+
+const logger: Middleware = async (ctx) => {
+  console.log(ctx.chatId, ctx.text);
+};
+
+const bot = createBot({
+  middleware: [logger],
+  // ...
+});
+```
+
+Explicit `next()` when you need code after the chain:
+
+```ts
+const timer: Middleware = async (ctx, next) => {
+  const t = Date.now();
+  await next();
+  console.log(Date.now() - t, "ms");
+};
+```
+
+## TeactPlugin
+
+```ts
+import type { TeactPlugin } from "@teactjs/runtime";
+
+const myPlugin: TeactPlugin = {
+  name: "analytics",
+  onStart: (bot) => {},
+  middleware: (ctx, next) => next(),
+  Provider: ({ children }) => children,
+  onStop: () => {},
+};
+```
+
+Register in `createBot({ plugins: [myPlugin] })` or via `defineConfig` / `teact.config.ts`.
+
+## Debug
+
+`createBot({ debug: true })` logs updates, renders, and middleware for troubleshooting.

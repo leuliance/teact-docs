@@ -1,0 +1,33 @@
+---
+title: Streaming
+description: useStream for live-updating message text with streamPlugin on the bot.
+---
+
+## Runtime
+
+```tsx
+import { useStream } from "@teactjs/core";
+
+const { text, isStreaming, stream } = useStream({ throttleMs: 100 });
+
+async function run() {
+  await stream(tokenAsyncIterable());
+}
+
+return <Message text={isStreaming ? text : `Done: ${text}`} />;
+```
+
+## Telegram plugin
+
+Register `streamPlugin` from `@teactjs/telegram` in `createBot` plugins so the adapter can deliver partial text updates.
+
+```ts
+import { streamPlugin } from "@teactjs/telegram";
+
+const bot = createBot({
+  plugins: [streamPlugin()],
+  // ...
+});
+```
+
+See [Telegram adapter](/docs/guides/telegram-adapter).

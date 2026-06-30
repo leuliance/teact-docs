@@ -1,0 +1,53 @@
+---
+title: Commands
+description: Register Telegram bot commands with createBot, map them to routes or handlers, and read them in components with useCommand.
+---
+
+## Registering commands
+
+Pass a `commands` object to `createBot`:
+
+```ts
+const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  token: process.env.TELEGRAM_BOT_TOKEN!,
+  commands: {
+    start: { description: "Start the bot", route: "/" },
+    help: {
+      description: "Show help",
+      handler: (ctx) => ctx.reply("Help text"),
+    },
+    settings: { description: "Settings", route: "/settings" },
+  },
+});
+```
+
+- **`route`** — navigates the Teact router to that path (when using a router).
+- **`handler`** — imperative reply (grammY-style) without routing.
+
+The adapter registers these with Telegram so they appear in the command menu.
+
+## Deep links
+
+Scaffold templates (e.g. Showcase) often ship a `commands.ts` that wires `/start` payloads and menu entries to routes. Point users to `https://t.me/YourBot?start=...` for deep entry.
+
+## useCommand
+
+Inside components, read the parsed command and arguments:
+
+```tsx
+import { useCommand } from "@teactjs/core";
+
+function Screen() {
+  const cmd = useCommand();
+  // cmd.command, cmd.args, etc. (shape from runtime)
+  return <Message text={cmd?.command ?? "menu"} />;
+}
+```
+
+Use this to branch UI when the same route handles multiple command aliases.
+
+## Buttons that carry routes
+
+Inline buttons can target routes (see [Components](/docs/guides/components) — `Button` with `onClick` navigating or callback data mapped to routes depending on your setup).

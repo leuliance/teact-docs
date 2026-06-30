@@ -1,0 +1,73 @@
+---
+title: UI components
+description: Message, keyboards, media, polls, formatting, and utility components from @teactjs/react / @teactjs/core.
+---
+
+## Message
+
+Text messages with optional `parseMode` (`HTML`, `Markdown`, `MarkdownV2`). Children can render an inline keyboard.
+
+```tsx
+<Message text="Hello!" parseMode="HTML" />
+<Message text="Pick one">
+  <InlineKeyboard>
+    <Button text="A" onClick={() => {}} />
+  </InlineKeyboard>
+</Message>
+```
+
+## Inline keyboards
+
+```tsx
+<InlineKeyboard>
+  <ButtonRow>
+    <Button text="URL" url="https://example.com" />
+    <Button text="Start flow" conversation="onboarding" />
+  </ButtonRow>
+</InlineKeyboard>
+```
+
+Compound: `InlineKeyboard.Row`, `InlineKeyboard.Button`. **`WebAppButton`** opens a Telegram Web App.
+
+## Media
+
+- `Photo`, `Video`, `Animation`, `Voice`, `Audio`, `VideoNote`, `Sticker`, `Document`
+- `MediaGroup` with `MediaGroup.Photo` / `MediaGroup.Video`
+
+## Contact, location
+
+- `Contact` — phone, name
+- `Location`, `LiveLocation`, `Venue` — compound: `Location.Live`, `Location.Venue`
+
+## Reply keyboard
+
+```tsx
+<ReplyKeyboard resizeKeyboard oneTimeKeyboard placeholder="Choose...">
+  <ReplyRow>
+    <ReplyButton text="A" />
+    <RequestContactButton text="Share contact" />
+  </ReplyRow>
+</ReplyKeyboard>
+```
+
+`ReplyKeyboardRemove` clears the custom keyboard.
+
+## Polls
+
+```tsx
+<Poll question="Favorite?" options={["A", "B"]} />
+<Poll.Quiz question="2+2?" options={["3","4","5"]} correctOptionId={1} />
+```
+
+## Feedback & layout
+
+- `Notification` — callback query answer (toast / alert)
+- `Alert`, `List`, `ListItem`, `Divider`
+- Formatting: `Bold`, `Italic`, `Code`, … inside `Message` text
+
+## Resilience
+
+- `SuspenseFallback` — loading line for `Suspense` boundaries
+- `ErrorBoundary` — catch render errors with a fallback UI
+
+Full prop details mirror Telegram Bot API fields — see [@teactjs/react](/docs/packages/react).

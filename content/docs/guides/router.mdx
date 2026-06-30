@@ -1,0 +1,73 @@
+---
+title: Router
+description: createRouter, route maps, guards, useNavigate, useParams, and useRoute.
+---
+
+## createRouter
+
+Define paths and components (or lazy metadata):
+
+```ts
+import { createRouter } from "@teactjs/core";
+
+const router = createRouter(
+  {
+    "/": Home,
+    "/settings": { component: Settings, beforeLoad: guardAuth },
+    "/pokemon/:id": PokemonDetail,
+  },
+  { notFound: NotFoundPage },
+);
+
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  token: process.env.TELEGRAM_BOT_TOKEN!,
+});
+```
+
+`component` at the root of `createBot` and `router` are **mutually exclusive**.
+
+## Route guards (`beforeLoad`)
+
+Run before a route loads. You can:
+
+- **Redirect** — `return redirect("/login")`
+- **Reply** with text and buttons — `return reply("Please log in", { buttons: [...] })`
+- **Render JSX** — `return <LoginPage />`
+
+## Navigation
+
+```tsx
+import { useNavigate, useRoute, useParams } from "@teactjs/core";
+
+function Home() {
+  const navigate = useNavigate();
+  const { path, params } = useRoute();
+  const { id } = useParams<{ id: string }>();
+
+  return (
+    <Message text="Home">
+      <InlineKeyboard>
+        <Button text="Settings" onClick={() => navigate("/settings")} />
+        <Button text="Back" onClick={() => navigate("/", { mode: "dismiss" })} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+### navigate modes
+
+- `push` — default stack behavior
+- `replace` — replace current route
+- `stack` — push onto stack
+- `dismiss` — pop / go back
+
+## Params
+
+`useParams<T>()` gives typed access to dynamic segments (e.g. `/pokemon/:id`).
+
+## Not found
+
+Pass `notFound` in the second argument to `createRouter` for a custom 404 screen.

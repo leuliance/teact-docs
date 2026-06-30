@@ -1,0 +1,64 @@
+---
+title: Installation
+description: Install Bun (recommended), scaffold with create-teact or the teact CLI, and add @teactjs packages to an existing project.
+---
+
+## Prerequisites
+
+- **[Bun](https://bun.sh)** (recommended for `bun dev` / HMR) or Node 20+ if you use npm/pnpm.
+- A **Telegram bot token** from [@BotFather](https://t.me/BotFather).
+
+## New project (recommended)
+
+```bash
+bun create teact my-bot
+cd my-bot
+```
+
+The wizard asks for:
+
+- **Project name** (if not passed as `my-bot`)
+- **Template** — Starter, Showcase, Counter, or Empty
+- **Features** — storage, conversations, streaming, auth, i18n, payments (varies by template)
+- **Package manager** — `bun`, `npm`, or `pnpm`
+- **Install dependencies** — usually yes
+
+Then add your token to `.env`:
+
+```bash
+# .env
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+```
+
+Start development:
+
+```bash
+bun dev
+```
+
+## CLI equivalents
+
+If you install the CLI globally or use `bunx`:
+
+```bash
+teact create my-bot
+teact dev
+teact build
+```
+
+See [CLI](/docs/packages/cli) for all commands (`generate`, `doctor`, flags).
+
+## Existing project
+
+Add the packages you need:
+
+```bash
+bun add @teactjs/core @teactjs/telegram
+```
+
+Optional: `@teactjs/storage`, `@teactjs/testing` (dev), etc. Most APIs are re-exported from `@teactjs/core` for convenience.
+
+## Verify
+
+- `teact doctor` — environment and project checks.
+- Send `/start` to your bot after `bun dev` — you should see your root component or router home route.

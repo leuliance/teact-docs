@@ -1,0 +1,33 @@
+---
+title: Storage
+description: storagePlugin with file or memory drivers; useStorage and useGlobalStorage for persistent key-value state.
+---
+
+## Plugin
+
+```ts
+import { storagePlugin } from "@teactjs/storage";
+
+storagePlugin({
+  driver: "file",
+  path: "./data",
+});
+```
+
+Drivers: `"memory"` (ephemeral), `"file"` (JSON on disk), or a custom **`StorageDriver`**.
+
+## useStorage
+
+Reactive per-key state:
+
+```tsx
+import { useStorage } from "@teactjs/storage";
+
+const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
+```
+
+## useGlobalStorage
+
+Low-level async API: `get`, `set`, `delete`, `has`, `keys`, `clear`.
+
+See [@teactjs/storage](/docs/packages/storage).

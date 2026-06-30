@@ -1,0 +1,27 @@
+---
+title: "@teactjs/core"
+description: Main barrel — React primitives, components, runtime, and renderer types in one package.
+---
+
+```bash
+bun add @teactjs/core
+```
+
+## Exports (summary)
+
+- **React** — `useState`, `useEffect`, …, `createContext`, `Suspense`, …
+- **Components** — everything from `@teactjs/react` (`Message`, `Button`, keyboards, media, …)
+- **Runtime** — `createBot`, `createRouter`, hooks, `defineConfig`, plugins, i18n, …
+- **Renderer types** — `TNode`, `createRoot`, `TeactRoot`, `OutputNode`, `BotContext`, `SessionStore`, `Middleware`, …
+
+```tsx
+import {
+  createBot,
+  createRouter,
+  Message,
+  Button,
+  useNavigate,
+} from "@teactjs/core";
+```
+
+Prefer **granular packages** (`@teactjs/react`, `@teactjs/runtime`) if you want explicit boundaries.

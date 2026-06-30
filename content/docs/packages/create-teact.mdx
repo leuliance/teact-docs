@@ -1,0 +1,36 @@
+---
+title: create-teact
+description: Interactive scaffolder — bun create teact, templates, features, and generated file layout.
+---
+
+```bash
+bun create teact my-bot
+# npx create-teact / pnpm create teact
+```
+
+## What it generates
+
+- `package.json`, `tsconfig.json`, `teact.config.ts`, `.env`, `.gitignore`
+- `src/` entry, pages, hooks — varies by **template** and **features**
+
+## Templates
+
+| Name | CLI flag | Notes |
+| ---- | -------- | ----- |
+| Starter | `starter` / `router` | Main menu; features add routes |
+| Showcase | `showcase` / `full` | Demo app; features toggle plugins |
+| Counter | `counter` | Single screen |
+| Empty | `empty` | No router |
+
+## Features
+
+| Feature | Adds (typical) |
+| ------- | ---------------- |
+| Storage | `storagePlugin`, settings-style page |
+| Conversations | `conversationsPlugin`, flows |
+| Streaming | `streamPlugin`, stream demo |
+| Auth | `authPlugin`, guarded routes |
+| i18n | Locales, language page |
+| Payments | `useInvoice` demo, provider token in `.env` |
+
+Templates are maintained in **`create-teact/lib`** and mirrored into **`@teactjs/cli`** on build.

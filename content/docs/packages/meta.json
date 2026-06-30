@@ -1,0 +1,16 @@
+{
+  "title": "Packages",
+  "icon": "Package",
+  "pages": [
+    "index",
+    "core",
+    "react",
+    "runtime",
+    "ui",
+    "telegram",
+    "storage",
+    "testing",
+    "cli",
+    "create-teact"
+  ]
+}

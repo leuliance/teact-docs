@@ -1,0 +1,46 @@
+---
+title: Telegram adapter
+description: TelegramAdapter on grammY — polling, webhooks, adapter methods, and optional plugins.
+---
+
+## Basic usage
+
+```ts
+import { TelegramAdapter } from "@teactjs/telegram";
+
+new TelegramAdapter();
+```
+
+Pass to `createBot` with `token` and `mode: "polling"` | `"webhook"`.
+
+## Webhook
+
+```ts
+mode: "webhook",
+webhook: {
+  domain: "https://example.com",
+  port: 3000,
+  path: "/webhook",
+  secretToken: "optional-secret",
+},
+```
+
+## Adapter surface
+
+| Method | Role |
+| ------ | ---- |
+| `connect({ token })` | Init grammY bot |
+| `listen({ polling?, webhook? })` | Start transport |
+| `send` / `edit` | Output tree → Telegram messages |
+| `clearButtons` | Remove inline keyboard |
+| `setCommands` | Menu commands |
+| `use` | grammY middleware |
+| `disconnect` | Stop |
+| `getBot` | Raw grammY `Bot` |
+
+## Plugins (package)
+
+- **`conversationsPlugin`** + `defineConversation` — see [Conversations](/docs/guides/conversations)
+- **`streamPlugin`** — see [Streaming](/docs/guides/streaming)
+
+More: [grammY docs](https://grammy.dev).

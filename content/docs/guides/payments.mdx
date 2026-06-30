@@ -1,0 +1,18 @@
+---
+title: Payments
+description: useInvoice for Telegram native invoices — titles, prices, currency, and provider token.
+---
+
+```tsx
+import { useInvoice } from "@teactjs/core";
+
+const { send, status, receipt, error } = useInvoice({
+  title: "Premium",
+  description: "Monthly",
+  currency: "USD",
+  prices: [{ label: "Plan", amount: 999 }],
+  providerToken: process.env.PAYMENT_PROVIDER_TOKEN!,
+});
+```
+
+Set **`PAYMENT_PROVIDER_TOKEN`** (or your template’s env name) from your payment provider. Handle `pre_checkout_query` / `successful_payment` via [Events](/docs/guides/events) if you need server-side validation beyond the default flow.

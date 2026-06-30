@@ -1,0 +1,29 @@
+---
+title: "@teactjs/cli"
+description: teact CLI — create, dev, build, generate, doctor.
+---
+
+```bash
+bun add -D @teactjs/cli
+```
+
+## Commands
+
+| Command | Purpose |
+| ------- | ------- |
+| `teact create <name>` | Scaffold project (`-t` template, `-f` features, `--pm`, `--no-install`) |
+| `teact dev` | Dev server + HMR (`-e` entry) |
+| `teact build` | Production build to `dist/` |
+| `teact generate component X` | Boilerplate component / hook / plugin |
+| `teact doctor` | Environment + project diagnostics |
+
+### Templates
+
+- **starter** — menu + optional feature routes
+- **showcase** — full demo (Pokedex, guards, commands)
+- **counter** — minimal counter
+- **empty** — single message, no router
+
+### Features flag
+
+Comma-separated: `storage`, `conversations`, `streaming`, `auth`, `i18n`, `payments`

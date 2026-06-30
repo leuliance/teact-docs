@@ -1,0 +1,58 @@
+---
+title: Authentication
+description: authPlugin and useAuth for roles; useAuthSession for token-based login state in the session store.
+---
+
+## Role-based auth (plugin)
+
+```ts
+import { authPlugin } from "@teactjs/core";
+
+const bot = createBot({
+  plugins: [authPlugin({ admins: [123456789] })],
+  // ...
+});
+```
+
+```tsx
+import { useAuth } from "@teactjs/core";
+
+function Admin() {
+  const { isAdmin, role, is, hasAny } = useAuth();
+  if (!isAdmin) return <Message text="Unauthorized" />;
+  return <Message text="Admin panel" />;
+}
+```
+
+## Token session (useAuthSession)
+
+```tsx
+import { useAuthSession } from "@teactjs/core";
+
+function LoginPage() {
+  const auth = useAuthSession();
+
+  if (auth.isAuthenticated) {
+    return <Message text={`Welcome!`} />;
+  }
+
+  return (
+    <Message text="Log in">
+      <InlineKeyboard>
+        <Button
+          text="Login"
+          onClick={() =>
+            auth.login({ accessToken: "tok", refreshToken: "ref" })
+          }
+        />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+- `auth.login(tokens)` — store access/refresh + optional `expiresAt`
+- `auth.logout()` — clear
+- `auth.setAccessToken(token, expiresAt?)` — refresh flow
+
+Combine with [Router](/docs/guides/router) guards to protect routes.

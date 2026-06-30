@@ -1,0 +1,24 @@
+{
+  "title": "Guides",
+  "icon": "BookOpen",
+  "pages": [
+    "index",
+    "---Core---",
+    "router",
+    "commands",
+    "conversations",
+    "forms",
+    "---Runtime---",
+    "hooks",
+    "components",
+    "events",
+    "streaming",
+    "auth",
+    "i18n",
+    "payments",
+    "storage",
+    "middleware-plugins",
+    "telegram-adapter",
+    "testing"
+  ]
+}

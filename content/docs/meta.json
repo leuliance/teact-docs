@@ -1,0 +1,12 @@
+{
+  "title": "Teact",
+  "pages": [
+    "index",
+    "---Getting started---",
+    "getting-started",
+    "---Guides---",
+    "guides",
+    "---Packages---",
+    "packages"
+  ]
+}

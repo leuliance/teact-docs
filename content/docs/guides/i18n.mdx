@@ -1,0 +1,37 @@
+---
+title: Internationalization (i18n)
+description: createI18n and useLocale for translated copy and per-user language switching.
+---
+
+## Setup
+
+```ts
+import { createI18n } from "@teactjs/core";
+
+export const i18n = createI18n({
+  defaultLocale: "en",
+  resources: {
+    en: { greeting: "Hello {{name}}!" },
+    am: { greeting: "ሰላም {{name}}!" },
+  },
+});
+```
+
+Wire `i18n` through your bot `providers` or plugin pattern as your template does.
+
+## useLocale
+
+```tsx
+import { useLocale } from "@teactjs/core";
+
+function Greeting() {
+  const { t, locale, setLocale } = useLocale();
+  return (
+    <Message
+      text={t("greeting", { name: "World" })}
+    />
+  );
+}
+```
+
+Scaffolded **i18n** feature adds locale JSON files and often a `/language` route with `LanguagePage`.

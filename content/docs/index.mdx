@@ -1,0 +1,38 @@
+---
+title: Introduction
+description: Build Telegram bots with React components, hooks, and file-style routing — powered by Teact and grammY.
+---
+
+Teact lets you ship Telegram bots using the same mental model as React apps: **components**, **hooks**, **routing**, and **JSX**, compiled and run with Bun.
+
+<Cards>
+  <Card title="Install & scaffold" href="/docs/getting-started/installation" description="Create a project and add your bot token." />
+  <Card title="Router & navigation" href="/docs/guides/router" description="createRouter, guards, and useNavigate." />
+  <Card title="UI components" href="/docs/guides/components" description="Message, keyboards, media, polls, and more." />
+  <Card title="Package index" href="/docs/packages" description="@teactjs/core, runtime, telegram, storage, CLI." />
+</Cards>
+
+## What you can build
+
+- **Messages & keyboards** — Inline and reply keyboards with `<Button>`, `<InlineKeyboard>`, `<ReplyKeyboard>`.
+- **Routing** — `createRouter` with params, `beforeLoad` guards, and navigation modes (`push`, `replace`, `stack`, `dismiss`).
+- **Flows** — Multi-step **conversations** and schema-driven **forms**.
+- **Platform features** — **Streaming** text, **i18n**, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** via `useOn`.
+
+## Packages at a glance
+
+| Package | Role |
+| -------- | ---- |
+| `@teactjs/core` | Single import for React + runtime + renderer types |
+| `@teactjs/react` | Telegram UI components and data hooks |
+| `@teactjs/runtime` | `createBot`, router, sessions, middleware, plugins |
+| `@teactjs/telegram` | grammY-based adapter (polling & webhook) |
+| `@teactjs/storage` | Persistent storage plugin |
+| `@teactjs/testing` | `MockAdapter`, `renderBot` |
+| `@teactjs/cli` / `create-teact` | Dev server, build, scaffold |
+
+## Next steps
+
+1. Follow [Installation](/docs/getting-started/installation) and [Quick start](/docs/getting-started/quick-start).
+2. Skim [Configuration](/docs/getting-started/configuration) for `teact.config.ts` and plugins.
+3. Deep-dive guides under **Guides** in the sidebar.

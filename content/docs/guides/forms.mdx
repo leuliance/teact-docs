@@ -1,0 +1,29 @@
+---
+title: Forms
+description: Schema-driven forms with useField-style validation patterns via useForm in Teact.
+---
+
+## useForm
+
+Define fields with types and optional validators:
+
+```tsx
+import { useForm } from "@teactjs/core";
+
+const form = useForm({
+  name: { type: "string", required: true },
+  email: {
+    type: "string",
+    validate: (v) => (/\S+@\S+\.\S+/.test(v) ? true : "Invalid email"),
+  },
+});
+```
+
+Bind prompts and buttons to `form` state, show field errors, and submit when valid.
+
+## When to use forms vs conversations
+
+- **Conversations** — linear wizard, one question at a time, great for Telegram chat UX.
+- **Forms** — multiple related fields, validation rules, and structured data in fewer round-trips when your UI can show several inputs (e.g. custom keyboards or sequential prompts grouped logically).
+
+Combine with [Storage](/docs/guides/storage) to persist drafts or submitted data.

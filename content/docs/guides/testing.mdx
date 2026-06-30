@@ -1,0 +1,37 @@
+---
+title: Testing bots
+description: MockAdapter to simulate updates and assert sends; renderBot for isolated component trees.
+---
+
+## MockAdapter
+
+```ts
+import { MockAdapter } from "@teactjs/testing";
+import { createBot } from "@teactjs/core";
+
+const adapter = new MockAdapter();
+const bot = createBot({ component: App, adapter, token: "test" });
+await bot.start();
+
+adapter.simulateMessage({ chatId: 1, text: "/start" });
+adapter.simulateCallback({ chatId: 1, data: "ok" });
+
+adapter.getLastSent();
+adapter.sent;
+adapter.reset();
+```
+
+## renderBot
+
+```tsx
+import { renderBot } from "@teactjs/testing";
+
+const result = renderBot(MyComponent);
+result.output;
+result.findByType("tg-button");
+result.findText();
+result.rerender({ text: "/help" });
+result.unmount();
+```
+
+Use with Vitest or Jest. See [@teactjs/testing](/docs/packages/testing).

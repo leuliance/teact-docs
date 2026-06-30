@@ -1,0 +1,65 @@
+---
+title: Configuration
+description: teact.config.ts, defineConfig, plugins, and how they connect to createBot.
+---
+
+## teact.config.ts
+
+Projects scaffolded with Teact include a root config file:
+
+```ts
+import { defineConfig } from "@teactjs/core";
+import { storagePlugin } from "@teactjs/storage";
+
+export default defineConfig({
+  plugins: [
+    storagePlugin({ driver: "file", path: "./data" }),
+  ],
+});
+```
+
+`defineConfig` is typed helper — it returns the same object you can pass to `createBot` plugins in code if you merge configs manually.
+
+## createBot options
+
+Typical options (see [Runtime](/docs/packages/runtime) for the full list):
+
+| Option | Purpose |
+| ------ | ------- |
+| `component` **or** `router` | Root UI — mutually exclusive |
+| `adapter` | e.g. `new TelegramAdapter()` |
+| `token` | Bot API token |
+| `mode` | `"polling"` (default) or `"webhook"` |
+| `webhook` | `{ domain, port?, path?, secretToken? }` when `mode: "webhook"` |
+| `session` | `{ store?, ttl? }` |
+| `middleware` | Array of middleware functions |
+| `plugins` | `TeactPlugin[]` — storage, auth, stream, grammY conversations, etc. |
+| `commands` | Telegram `/command` map — routes or handlers |
+| `providers` | React context providers |
+| `debug` | Verbose logging |
+
+## Environment variables
+
+Common examples:
+
+- `TELEGRAM_BOT_TOKEN` — required.
+- `PAYMENT_PROVIDER_TOKEN` — when using [Payments](/docs/guides/payments).
+
+## Webhook snippet
+
+```ts
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  token: process.env.TELEGRAM_BOT_TOKEN!,
+  mode: "webhook",
+  webhook: {
+    domain: "https://my-bot.example.com",
+    port: 3000,
+    path: "/webhook",
+    secretToken: process.env.WEBHOOK_SECRET,
+  },
+});
+```
+
+More detail in [Telegram adapter](/docs/guides/telegram-adapter).

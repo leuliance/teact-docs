@@ -1,0 +1,58 @@
+---
+title: Hooks reference
+description: Runtime and context hooks — navigation, session, platform, events, media senders, and bot metadata.
+---
+
+## Navigation
+
+| Hook | Purpose |
+| ---- | ------- |
+| `useNavigate()` | `(path, opts?) => void` — modes: `push`, `replace`, `stack`, `dismiss` |
+| `useParams<T>()` | Typed dynamic route params |
+| `useRoute()` | Current `{ path, params }` |
+
+## Context & session
+
+| Hook | Purpose |
+| ---- | ------- |
+| `useBot()` | Bot instance and metadata |
+| `useSession()` | `[sessionData, patchFn]` — read/update session |
+| `usePlatform()` | Platform string |
+| `useChatId()` | Current chat id |
+| `useText()` | Last message text |
+| `useCallbackData()` | Last callback query data |
+| `useCommand()` | Parsed command and args |
+
+## Events
+
+`useOn("message:text", handler)` — subscribe to update types. `useEventData("message:photo")` — read last matching payload.
+
+Supported patterns include `message`, `message:text`, `message:photo`, `callback_query`, `pre_checkout_query`, `successful_payment`, and `*`.
+
+See [Events](/docs/guides/events).
+
+## Media hooks
+
+Imperative send helpers (Telegram API):
+
+- `usePhoto`, `useVideo`, `useDocument`, `useVoice`, `useAudio`, `useSticker`, `useLocation`, `useContact`, `usePoll`
+
+Each returns an async function.
+
+## Streaming, auth, payments, i18n
+
+- [Streaming](/docs/guides/streaming) — `useStream`
+- [Auth](/docs/guides/auth) — `useAuth`, `useAuthSession`
+- [Payments](/docs/guides/payments) — `useInvoice`
+- [i18n](/docs/guides/i18n) — `useLocale`, `createI18n`
+
+## React primitives
+
+From `@teactjs/core` (re-exported): `useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`, `useContext`, `useId`, `use`, `createContext`, `memo`, `Fragment`, `Suspense`.
+
+## Data hooks (@teactjs/react)
+
+- `useQuery` — keyed async data with stale time and refetch
+- `useMutation` — async mutations with loading/error
+
+See [Components](/docs/guides/components) package doc for examples.

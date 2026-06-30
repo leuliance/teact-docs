@@ -1,0 +1,33 @@
+---
+title: Events
+description: useOn and useEventData for Telegram updates — messages, callbacks, payments, and wildcards.
+---
+
+## useOn
+
+Subscribe to updates:
+
+```tsx
+import { useOn } from "@teactjs/core";
+
+useOn("message:text", (ctx) => {
+  console.log("Text:", ctx.raw);
+});
+```
+
+## useEventData
+
+Read the latest payload for an event type:
+
+```tsx
+const photo = useEventData("message:photo");
+```
+
+## Common event keys
+
+- `message`, `message:text`, `message:photo`, …
+- `callback_query`
+- `pre_checkout_query`, `successful_payment`
+- `*` — all events (use sparingly)
+
+Pair with [Hooks](/docs/guides/hooks) for chat id, text, and callback data accessors.

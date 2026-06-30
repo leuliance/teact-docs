@@ -1,0 +1,60 @@
+---
+title: Conversations
+description: useConversation, declarative Conversation components, and grammY conversationsPlugin for imperative flows.
+---
+
+## Hook API
+
+Multi-step flows with validation:
+
+```tsx
+import { useConversation } from "@teactjs/core";
+
+const { step, value, actions } = useConversation({
+  name: {
+    prompt: "What's your name?",
+    validate: (v) => v.length > 0 || "Name required",
+  },
+  age: {
+    prompt: "How old are you?",
+    validate: (v) => (Number(v) > 0 ? true : "Must be a number"),
+  },
+});
+```
+
+Drive UI from `step`, show errors from validators, and commit with `actions`.
+
+## Declarative API
+
+```tsx
+import { Conversation, Message } from "@teactjs/core";
+
+<Conversation>
+  <Conversation.Prompt text="What's your name?" step="name" />
+  <Conversation.Prompt text="How old are you?" step="age" />
+  <Conversation.Complete>
+    {(data) => <Message text={`Hi ${data.name}, age ${data.age}`} />}
+  </Conversation.Complete>
+</Conversation>
+```
+
+## Trigger from buttons
+
+`Button` supports a **`conversation`** prop (string name) to enter a named flow when using the grammY conversations integration — see [Telegram adapter](/docs/guides/telegram-adapter).
+
+## grammY conversations (imperative)
+
+For async/await style flows outside JSX:
+
+```ts
+import { conversationsPlugin, defineConversation } from "@teactjs/telegram";
+
+defineConversation("onboarding", async (convo) => {
+  const name = await convo.prompt("What's your name?");
+  await convo.send(`Welcome, ${name}!`);
+});
+
+// plugins: [conversationsPlugin(), ...]
+```
+
+The conversation object exposes `prompt`, `send`, `wait`, `ask`, `stream`, reply helpers, `requestContact`, `requestLocation`, and `api` / `raw` access.

@@ -1,0 +1,68 @@
+---
+title: Quick start
+description: Run your first Teact bot — token, entry file, createBot, and TelegramAdapter in a few steps.
+---
+
+## Step 1 — Token
+
+Create `.env` in the project root:
+
+```bash
+# .env
+TELEGRAM_BOT_TOKEN=your_token_here
+```
+
+The scaffolder may use `TELEGRAM_BOT_TOKEN` or `BOT_TOKEN` depending on the template; align with your `src/index.tsx` imports.
+
+## Step 2 — Entry file
+
+A minimal bot wires a **root component** and the **Telegram adapter**:
+
+```tsx
+import { createBot, Message, Button, InlineKeyboard, useState } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <Message text={`Count: ${count}`}>
+      <InlineKeyboard>
+        <Button text="-1" onClick={() => setCount((c) => c - 1)} />
+        <Button text="+1" onClick={() => setCount((c) => c + 1)} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+const bot = createBot({
+  component: Counter,
+  adapter: new TelegramAdapter(),
+  token: process.env.TELEGRAM_BOT_TOKEN!,
+});
+
+await bot.start();
+```
+
+## Step 3 — Run
+
+```bash
+bun dev
+```
+
+Open Telegram, find your bot, send a message or `/start`. You should see the counter and inline buttons.
+
+## Step 4 — Router (optional)
+
+For multiple screens, swap `component` for `router`:
+
+```tsx
+import { createBot, createRouter } from "@teactjs/core";
+// const router = createRouter({ "/": Home, "/about": About });
+// const bot = createBot({ router, adapter, token });
+```
+
+See [Router](/docs/guides/router) for guards, params, and navigation.
+
+## Step 5 — Bot commands (optional)
+
+Register Telegram menu commands and deep links via `createBot({ commands: { ... } })`. See [Commands](/docs/guides/commands).
