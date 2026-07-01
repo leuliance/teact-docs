@@ -113,16 +113,16 @@ export default function HomePage() {
         <h1
           className={`${display.className} max-w-4xl pb-2 text-5xl font-extrabold leading-[1.12] tracking-tight text-zinc-900 sm:text-6xl md:text-7xl dark:text-white`}
         >
-          React took over the web.{' '}
+          Build bots that{' '}
           <span className="inline-block bg-linear-to-r from-cyan-600 via-sky-600 to-indigo-600 bg-clip-text pb-1 text-transparent dark:from-cyan-300 dark:via-sky-400 dark:to-indigo-400">
-            Bots are next.
+            feel like React apps.
           </span>
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-zinc-600 md:text-xl dark:text-zinc-400">
-          The web builds its best interfaces with React. In a world moving fast on AI,{' '}
-          <strong className="font-semibold text-zinc-900 dark:text-zinc-200">Teact</strong> brings the same
-          components, hooks, and routing to Telegram — bots that feel like apps, powered by grammY and Bun.
+          <strong className="font-semibold text-zinc-900 dark:text-zinc-200">Teact</strong> turns JSX, hooks,
+          routing, and keyboards into Telegram experiences — the same React you already know, with a runtime
+          tuned for grammY and Bun.
         </p>
 
         <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-center">

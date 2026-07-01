@@ -3,7 +3,31 @@ title: Quick start
 description: Run your first Teact bot — token, entry file, createBot, and TelegramAdapter in a few steps.
 ---
 
-## Step 1 — Token
+You need [Bun](https://bun.sh) and a bot token from [@BotFather](https://t.me/BotFather).
+
+## Step 1 — Install
+
+**Scaffold a new project** (recommended) — pick a template and features interactively:
+
+```bash
+bun create teact my-bot
+cd my-bot
+bun install
+```
+
+**Or add Teact to an existing project:**
+
+```bash
+bun add @teactjs/core @teactjs/ui @teactjs/telegram react
+```
+
+<Callout type="info">
+  Components come from **`@teactjs/ui`**; `createBot`, the router, and all hooks come from
+  **`@teactjs/core`**; the grammY-powered adapter is **`@teactjs/telegram`**. `react` is a peer
+  dependency. See [Installation](/docs/getting-started/installation) for npm/pnpm and details.
+</Callout>
+
+## Step 2 — Token
 
 Create `.env` in the project root:
 
@@ -14,7 +38,7 @@ TELEGRAM_BOT_TOKEN=your_token_here
 
 The token env var is always `TELEGRAM_BOT_TOKEN` — `createBot` reads `process.env.TELEGRAM_BOT_TOKEN` when no explicit `token` is passed.
 
-## Step 2 — Entry file
+## Step 3 — Entry file
 
 A minimal bot wires a **root component** and the **Telegram adapter**:
 
@@ -49,7 +73,7 @@ if (import.meta.main) bot.start();
   same file is imported elsewhere (e.g. a serverless handler that calls `bot.fetch(request)` instead).
 </Callout>
 
-## Step 3 — Run
+## Step 4 — Run
 
 ```bash
 bun dev
@@ -57,7 +81,7 @@ bun dev
 
 Open Telegram, find your bot, send a message or `/start`. You should see the counter and inline buttons.
 
-## Step 4 — Router (optional)
+## Step 5 — Router (optional)
 
 For multiple screens, swap `component` for a `router`. `createRouter(routes, options?)` maps paths to
 components:
@@ -80,6 +104,6 @@ const bot = createBot({
 
 `component` and `router` are mutually exclusive. See [Router](/docs/guides/router) for guards, params, and navigation.
 
-## Step 5 — Bot commands (optional)
+## Step 6 — Bot commands (optional)
 
 Register Telegram menu commands and deep links via `createBot({ commands: { ... } })`. See [Commands](/docs/guides/commands).
