@@ -111,10 +111,10 @@ export default function HomePage() {
         </div>
 
         <h1
-          className={`${display.className} max-w-4xl pb-2 text-5xl font-extrabold leading-[1.12] tracking-tight text-zinc-900 sm:text-6xl md:text-7xl dark:text-white`}
+          className={`${display.className} max-w-4xl pb-3 text-5xl font-extrabold leading-[1.15] tracking-tight text-zinc-900 sm:text-6xl md:text-7xl dark:text-white`}
         >
           Build bots that{' '}
-          <span className="inline-block bg-linear-to-r from-cyan-600 via-sky-600 to-indigo-600 bg-clip-text pb-1 text-transparent dark:from-cyan-300 dark:via-sky-400 dark:to-indigo-400">
+          <span className="bg-linear-to-r from-cyan-600 via-sky-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-300 dark:via-sky-400 dark:to-indigo-400">
             feel like React apps.
           </span>
         </h1>
