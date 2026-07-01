@@ -1,11 +1,12 @@
 ---
 title: Router
-description: createRouter, route maps, guards, useNavigate, useParams, and useRoute.
+description: createRouter, route maps, co-located commands, guards, useNavigate, useParams, and useRoute.
 ---
 
-## createRouter
 
-Define paths and components (or lazy metadata):
+The router maps paths to screens. A route value is either a **component** or an
+**object** with `component`, an optional `beforeLoad` guard, and an optional
+co-located `command`.
 
 ```ts
 import { createRouter } from "@teactjs/core";
@@ -14,10 +15,18 @@ const router = createRouter(
   {
     "/": Home,
     "/settings": { component: Settings, beforeLoad: guardAuth },
+    "/pokemon/list": PokemonList,
     "/pokemon/:id": PokemonDetail,
   },
   { notFound: NotFoundPage },
 );
+```
+
+Wire it into `createBot`:
+
+```ts
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
 
 const bot = createBot({
   router,
@@ -26,20 +35,67 @@ const bot = createBot({
 });
 ```
 
-`component` at the root of `createBot` and `router` are **mutually exclusive**.
+<Callout type="warn">
+  `component` at the root of `createBot` and `router` are **mutually exclusive** —
+  pass one or the other.
+</Callout>
+
+## Co-located commands
+
+Attach a Telegram command to the route it opens. The command name (without the
+leading slash), its menu `description`, and an optional `deepLink` resolver all
+live next to the route:
+
+```ts
+const router = createRouter({
+  "/pokedex": {
+    component: Pokedex,
+    command: {
+      name: "pokedex",
+      description: "Browse the Pokédex",
+      // /start <payload> → deep-link into a specific entry
+      deepLink: (args) => `/pokemon/${args[0]}`,
+    },
+  },
+});
+```
+
+Collected commands are handed to the bot engine automatically, so `/pokedex`
+appears in Telegram's command menu and opens the route. See
+[Commands](/docs/guides/commands) for standalone (non-route) commands.
 
 ## Route guards (`beforeLoad`)
 
-Run before a route loads. You can:
+Guards run **before** a route renders. They are **synchronous** and receive
+`{ path, params, session, reply }`. A guard may return:
 
-- **Redirect** — `return redirect("/login")`
-- **Reply** with text and buttons — `return reply("Please log in", { buttons: [...] })`
-- **Render JSX** — `return <LoginPage />`
+- **`redirect("/login")`** — a path string (via the `redirect` helper)
+- **A JSX element** — render it in place of the route
+- **`reply(text, { buttons })`** — send a message with buttons (same shape as
+  command replies)
+- **`undefined`** — allow the route to load
+
+```tsx
+import { redirect } from "@teactjs/core";
+
+function guardAuth({ session, reply }) {
+  if (!session.userId) return redirect("/login");
+  if (session.banned) return reply("You are banned.", { buttons: [] });
+  return undefined; // allowed
+}
+```
+
+<Callout type="warn">
+  Guards must be synchronous. Do all the async work (fetch, DB) beforehand and
+  read the result from `session`. A guard that **throws** fails **closed** — the
+  engine renders `notFound` and never leaks the protected page.
+</Callout>
 
 ## Navigation
 
 ```tsx
 import { useNavigate, useRoute, useParams } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 
 function Home() {
   const navigate = useNavigate();
@@ -57,17 +113,46 @@ function Home() {
 }
 ```
 
-### navigate modes
+### Navigation modes
 
-- `push` — default stack behavior
-- `replace` — replace current route
-- `stack` — push onto stack
-- `dismiss` — pop / go back
+Pass `{ mode }` as the second argument to `navigate`:
+
+- **`push`** — default; push a new entry onto the stack
+- **`replace`** — replace the current entry (no back step added)
+- **`stack`** — push onto the stack
+- **`dismiss`** — pop / go back one entry
+
+You can also navigate declaratively from a button with `<Button route="/x"
+params={{ id }} />` — see [Components](/docs/guides/components).
 
 ## Params
 
-`useParams<T>()` gives typed access to dynamic segments (e.g. `/pokemon/:id`).
+`useParams<T>()` gives typed access to dynamic segments. For `/pokemon/:id`,
+`useParams<{ id: string }>().id` holds the matched value.
+
+## Matching & precedence
+
+- **Static beats param at equal depth** — `/pokemon/list` wins over
+  `/pokemon/:id`, so a literal `list` never gets captured as an `:id`.
+- **Trailing slashes match** — `/settings` and `/settings/` resolve to the same
+  route.
+- **Redirect loops fall back to `notFound`** — if guards bounce between paths
+  past the redirect limit, the engine stops and renders the 404 screen.
 
 ## Not found
 
-Pass `notFound` in the second argument to `createRouter` for a custom 404 screen.
+Pass `notFound` in the second argument to `createRouter` for a custom 404
+screen. It is also the fallback whenever a guard throws or a redirect loop is
+detected.
+
+## Do / Don't
+
+- **Do** keep `beforeLoad` synchronous — return `redirect()`, JSX, `reply()`, or
+  `undefined`.
+- **Do** rely on static-over-param precedence: put `/x/list` and `/x/:id` in the
+  same map and the literal wins.
+- **Don't** assume a thrown guard shows a partial page — it fails **closed** to
+  `notFound`.
+- **Don't** set both `component` and `router` on `createBot`; they are mutually
+  exclusive.
+- **Don't** create guard cycles — redirect loops fall through to `notFound`.

@@ -1,29 +1,82 @@
 ---
 title: Forms
-description: Schema-driven forms with useField-style validation patterns via useForm in Teact.
+description: Schema-driven multi-field collection with useForm and the Form component.
 ---
+
+
+Forms collect a set of named fields with validation. Each field has a `prompt`
+(text, or a function of the data so far), optional `options` for choice fields,
+and an optional `validate` (a function returning `true | string`, or a
+Zod-compatible schema).
 
 ## useForm
 
-Define fields with types and optional validators:
-
 ```tsx
 import { useForm } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
 
-const form = useForm({
-  name: { type: "string", required: true },
-  email: {
-    type: "string",
-    validate: (v) => (/\S+@\S+\.\S+/.test(v) ? true : "Invalid email"),
-  },
-});
+function Signup() {
+  const form = useForm({
+    name: {
+      prompt: "What's your name?",
+      validate: (v) => v.trim().length > 1 || "Too short",
+    },
+    email: {
+      prompt: "Your email?",
+      validate: (v) => /\S+@\S+\.\S+/.test(v) || "Invalid email",
+    },
+    region: { prompt: "Pick a region:", options: [["Kanto", "Johto"]] },
+  });
+
+  return form.render(() => (
+    <Message text={`${form.data.name} <${form.data.email}> — ${form.data.region}`} />
+  ));
+}
 ```
 
-Bind prompts and buttons to `form` state, show field errors, and submit when valid.
+`form.render(onComplete)` renders the current field and calls `onComplete` when
+all fields are collected. Read answers from `form.data`; check `form.complete`;
+navigate with `form.back()`, `form.goTo(key)`, and `form.reset()`.
 
-## When to use forms vs conversations
+## Form component
 
-- **Conversations** — linear wizard, one question at a time, great for Telegram chat UX.
-- **Forms** — multiple related fields, validation rules, and structured data in fewer round-trips when your UI can show several inputs (e.g. custom keyboards or sequential prompts grouped logically).
+```tsx
+import { Form } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
 
-Combine with [Storage](/docs/guides/storage) to persist drafts or submitted data.
+// With the hook (recommended):
+<Form value={form}>
+  <Form.Complete>
+    <Message text={`Hello ${form.data.name}`} />
+  </Form.Complete>
+</Form>;
+
+// Self-contained (fields as children):
+<Form>
+  <Form.Field name="name" prompt="Name?" />
+  <Form.Field name="region" prompt="Region?" options={[["Kanto", "Johto"]]} />
+  <Form.Complete>
+    {(form) => <Message text={`${form.data.name} from ${form.data.region}`} />}
+  </Form.Complete>
+</Form>;
+```
+
+## Forms vs conversations
+
+- **Conversations** — a linear wizard, one question at a time; great for chat UX
+  and imperative async flows.
+- **Forms** — a fixed schema of related fields with per-field validation and a
+  structured `data` object at the end.
+
+Combine with [Storage](/docs/guides/storage) to persist drafts or results.
+
+## Do / Don't
+
+- **Do** define each field with `prompt` (+ optional `options` / `validate`) —
+  not a `type`/`required` shape.
+- **Do** return `form.render(() => <Done />)` so the current field and completion
+  are handled for you.
+- **Don't** read `form.data.field` before `form.complete` — the value isn't set
+  until the field is answered.
+- **Don't** hand-concatenate user input into HTML — let `<Message>` formatting
+  escape it (see [Components](/docs/guides/components)).

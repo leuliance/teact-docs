@@ -1,12 +1,11 @@
 ---
 title: "@teactjs/storage"
-description: storagePlugin, useStorage, useGlobalStorage, and built-in memory / file StorageDriver implementations.
+description: storagePlugin, useStorage, useGlobalStorage, and the StorageDriver interface with built-in memory and file drivers.
 ---
+
 
 Persistent key/value storage for Teact bots. Register `storagePlugin` once, then read and write
 state from any component with `useStorage`, or reach the raw driver with `useGlobalStorage`.
-
-## Install
 
 ```bash
 bun add @teactjs/storage
@@ -26,7 +25,8 @@ bun add @teactjs/storage
 
 ## Register the plugin
 
-The `file` driver's `path` is a **JSON file**, not a directory:
+`storagePlugin({ driver, path })` — `driver` is `'memory'` (default), `'file'`, or a custom
+`StorageDriver`. For the `file` driver, `path` is a **JSON file**, not a directory:
 
 ```ts
 // teact.config.ts
@@ -34,13 +34,9 @@ import { defineConfig } from "@teactjs/core";
 import { storagePlugin } from "@teactjs/storage";
 
 export default defineConfig({
-  plugins: [
-    storagePlugin({ driver: "file", path: ".teact/storage.json" }),
-  ],
+  plugins: [storagePlugin({ driver: "file", path: ".teact/storage.json" })],
 });
 ```
-
-Use `driver: "memory"` (the default) for ephemeral state during development.
 
 ## Read and write state
 
@@ -52,6 +48,34 @@ import { useStorage } from "@teactjs/storage";
 const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
 ```
 
-The low-level driver from `useGlobalStorage` exposes `get`, `set`, `delete`, `has`, `keys`, and `clear`.
+`useGlobalStorage()` returns the driver itself: `get`, `set`, `delete`, `has`, `keys`, `clear`.
 
-See the [Storage guide](/docs/guides/storage) for custom drivers and patterns.
+## StorageDriver interface
+
+A driver implements six synchronous methods:
+
+```ts
+interface StorageDriver {
+  get<T>(key: string): T | undefined;
+  set<T>(key: string, value: T): void;
+  delete(key: string): void;
+  has(key: string): boolean;
+  clear(): void;
+  keys(): string[];
+}
+```
+
+Pass an instance as `driver` to plug in any backend (Redis, SQLite, Supabase, …):
+
+```ts
+import { RedisDriver } from "@teactjs/storage-redis";
+storagePlugin({ driver: new RedisDriver({ url: "redis://localhost:6379" }) });
+```
+
+<Callout type="warn">
+On edge runtimes there is no filesystem: the `'file'` driver warns and degrades to memory, which
+does **not** persist across isolate freezes. Provide a driver backed by durable async storage (KV,
+Redis, a DB) instead.
+</Callout>
+
+See the [Storage guide](/docs/guides/storage) for driver patterns and the edge caveat in full.

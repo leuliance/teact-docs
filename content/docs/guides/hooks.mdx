@@ -1,7 +1,20 @@
 ---
 title: Hooks reference
-description: Runtime and context hooks — navigation, session, platform, events, media senders, and bot metadata.
+description: Runtime and context hooks — navigation, session, events, media, and data.
 ---
+
+
+All hooks are imported from **`@teactjs/core`**. React primitives are re-exported
+there too, so you rarely import from `react` directly.
+
+## React primitives (re-exported)
+
+`useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`,
+`useContext`, `useId`, `use`, `createContext`, `memo`, `Fragment`, `Suspense`.
+
+```tsx
+import { useState } from "@teactjs/core";
+```
 
 ## Navigation
 
@@ -11,48 +24,68 @@ description: Runtime and context hooks — navigation, session, platform, events
 | `useParams<T>()` | Typed dynamic route params |
 | `useRoute()` | Current `{ path, params }` |
 
+See [Router](/docs/guides/router).
+
 ## Context & session
 
 | Hook | Purpose |
 | ---- | ------- |
 | `useBot()` | Bot instance and metadata |
-| `useSession()` | `[sessionData, patchFn]` — read/update session |
-| `usePlatform()` | Platform string |
+| `useSession<T>()` | `[session, setSession]` — read/update session |
 | `useChatId()` | Current chat id |
 | `useText()` | Last message text |
-| `useCallbackData()` | Last callback query data |
 | `useCommand()` | Parsed command and args |
+
+## Telegram context
+
+| Hook | Purpose |
+| ---- | ------- |
+| `useChat()` | Current chat object |
+| `useTelegram()` | Low-level `{ api, chatId }` access |
 
 ## Events
 
-`useOn("message:text", handler)` — subscribe to update types. `useEventData("message:photo")` — read last matching payload.
+`useOn("message:text", handler)` subscribes to update types;
+`useEventData("message:photo")` reads the last matching payload. See
+[Events](/docs/guides/events).
 
-Supported patterns include `message`, `message:text`, `message:photo`, `callback_query`, `pre_checkout_query`, `successful_payment`, and `*`.
+## Media
 
-See [Events](/docs/guides/events).
+`useMedia()` returns an object of send helpers
+(`photo`, `video`, `animation`, `audio`, `voice`, `document`, `sticker`,
+`location`, `contact`, `venue`, `poll`). Or grab a single sender with the
+per-type hooks:
 
-## Media hooks
+`usePhoto`, `useVideo`, `useAnimation`, `useAudio`, `useVoice`, `useDocument`,
+`useSticker`, `useLocation`, `useContact`, `useVenue`, `usePoll`.
 
-Imperative send helpers (Telegram API):
+```tsx
+import { usePhoto, useMedia } from "@teactjs/core";
 
-- `usePhoto`, `useVideo`, `useDocument`, `useVoice`, `useAudio`, `useSticker`, `useLocation`, `useContact`, `usePoll`
+const sendPhoto = usePhoto();
+await sendPhoto("https://example.com/cat.jpg", { caption: "A cat" });
 
-Each returns an async function.
+const media = useMedia();
+await media.location(51.5, -0.12);
+```
 
-## Streaming, auth, payments, i18n
+There are also per-type **read** hooks for incoming media on the current update:
+`usePhoto`-style reads via `useMedia`, plus `usePoll`, `useLocation`,
+`useContact`, `useVenue`, `useSticker`, `useDocument`, `useVoice`, `useAudio`,
+`useAnimation`, `useVideo`.
 
+## Data
+
+- `useQuery` — keyed async data with caching and refetch.
+- `useMutation` — async mutations with loading/error state.
+
+Both are exported from `@teactjs/core` (and re-exported from `@teactjs/ui`).
+
+## Flows, streaming, auth, payments, i18n
+
+- [Conversations](/docs/guides/conversations) — `useConversation`
+- [Forms](/docs/guides/forms) — `useForm`
 - [Streaming](/docs/guides/streaming) — `useStream`
 - [Auth](/docs/guides/auth) — `useAuth`, `useAuthSession`
 - [Payments](/docs/guides/payments) — `useInvoice`
 - [i18n](/docs/guides/i18n) — `useLocale`, `createI18n`
-
-## React primitives
-
-From `@teactjs/core` (re-exported): `useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`, `useContext`, `useId`, `use`, `createContext`, `memo`, `Fragment`, `Suspense`.
-
-## Data hooks (@teactjs/react)
-
-- `useQuery` — keyed async data with stale time and refetch
-- `useMutation` — async mutations with loading/error
-
-See [Components](/docs/guides/components) package doc for examples.

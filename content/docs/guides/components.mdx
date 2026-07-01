@@ -1,73 +1,152 @@
 ---
 title: UI components
-description: Message, keyboards, media, polls, formatting, and utility components from @teactjs/ui / @teactjs/react.
+description: Message, keyboards, media, polls, and formatting from @teactjs/ui.
 ---
+
+
+All components come from **`@teactjs/ui`**. They mirror Telegram Bot API fields,
+so a component tree renders to one (or more) Telegram messages.
 
 ## Message
 
-Text messages with optional `parseMode` (`HTML`, `Markdown`, `MarkdownV2`). Children can render an inline keyboard.
+Text messages with an optional `parseMode` (`HTML`, `Markdown`, `MarkdownV2`).
+Children render an inline keyboard.
 
 ```tsx
-<Message text="Hello!" parseMode="HTML" />
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+<Message text="Hello!" />;
+
 <Message text="Pick one">
   <InlineKeyboard>
     <Button text="A" onClick={() => {}} />
   </InlineKeyboard>
-</Message>
+</Message>;
 ```
 
-## Inline keyboards
+<Callout type="warn">
+  Telegram clamps text to **4096** characters and captions to **1024**. Longer
+  strings are truncated for you.
+</Callout>
+
+## Keyboards
+
+`<InlineKeyboard>` holds `<Button>` children. Row layout depends on how you nest
+them:
+
+- **A bare `<Button>` becomes its own row.**
+- **`<InlineKeyboard columns={n}>`** auto-grids bare buttons into `n`-column rows
+  — no `<ButtonRow>` needed.
+- **`<ButtonRow>`** groups buttons into one explicit row.
 
 ```tsx
+// One button per row (bare):
+<InlineKeyboard>
+  <Button text="Top" onClick={onTop} />
+  <Button text="Bottom" onClick={onBottom} />
+</InlineKeyboard>
+
+// Auto 2-column grid:
+<InlineKeyboard columns={2}>
+  <Button text="A" route="/a" />
+  <Button text="B" route="/b" />
+  <Button text="C" route="/c" />
+</InlineKeyboard>
+
+// Explicit rows:
 <InlineKeyboard>
   <ButtonRow>
-    <Button text="URL" url="https://example.com" />
-    <Button text="Start flow" conversation="onboarding" />
+    <Button text="Yes" onClick={onYes} />
+    <Button text="No" onClick={onNo} />
   </ButtonRow>
 </InlineKeyboard>
 ```
 
-Compound: `InlineKeyboard.Row`, `InlineKeyboard.Button`. **`WebAppButton`** opens a Telegram Web App.
+### Button variants
+
+```tsx
+<Button text="Open" route="/pokemon/:id" params={{ id: "25" }} /> {/* navigate */}
+<Button text="Run" onClick={() => {}} />                          {/* handler */}
+<Button text="Docs" url="https://example.com" />                  {/* open URL */}
+<WebAppButton text="Launch app" url="https://myapp.example" />    {/* Web App */}
+```
+
+- `route` + `params` — declarative navigation (fills `:param` segments).
+- `onClick` — a callback (or a raw `callback_data` string).
+- `url` — opens a link, no callback.
+- `<WebAppButton>` — opens a Telegram Web App.
+
+Reply (custom) keyboards use `<ReplyKeyboard>` with `<ReplyRow>`,
+`<ReplyButton>`, `<RequestContactButton>`, and `<RequestLocationButton>`;
+`<ReplyKeyboardRemove>` clears the custom keyboard.
 
 ## Media
 
-- `Photo`, `Video`, `Animation`, `Voice`, `Audio`, `VideoNote`, `Sticker`, `Document`
-- `MediaGroup` with `MediaGroup.Photo` / `MediaGroup.Video`
+Single-item components: `Photo`, `Video`, `Animation`, `Voice`, `Audio`,
+`VideoNote`, `Sticker`, `Document`. Location/contact: `Contact`, `Location`,
+`LiveLocation`, `Venue`.
 
-## Contact, location
-
-- `Contact` — phone, name
-- `Location`, `LiveLocation`, `Venue` — compound: `Location.Live`, `Location.Venue`
-
-## Reply keyboard
+Albums use `<MediaGroup>` with `<MediaPhoto>` / `<MediaVideo>`:
 
 ```tsx
-<ReplyKeyboard resizeKeyboard oneTimeKeyboard placeholder="Choose...">
-  <ReplyRow>
-    <ReplyButton text="A" />
-    <RequestContactButton text="Share contact" />
-  </ReplyRow>
-</ReplyKeyboard>
+import { MediaGroup, MediaPhoto, MediaVideo } from "@teactjs/ui";
+
+<MediaGroup>
+  <MediaPhoto src="a.jpg" />
+  <MediaPhoto src="b.jpg" />
+  <MediaVideo src="c.mp4" />
+</MediaGroup>;
 ```
 
-`ReplyKeyboardRemove` clears the custom keyboard.
+<Callout type="warn">
+  A media group must contain **2–10** items. A single item is sent as a normal
+  media message instead.
+</Callout>
 
 ## Polls
 
 ```tsx
+import { Poll } from "@teactjs/ui";
+
 <Poll question="Favorite?" options={["A", "B"]} />
-<Poll.Quiz question="2+2?" options={["3","4","5"]} correctOptionId={1} />
+<Poll.Quiz question="2+2?" options={["3", "4", "5"]} correctOptionId={1} />
 ```
 
-## Feedback & layout
+## Formatting
 
-- `Notification` — callback query answer (toast / alert)
-- `Alert`, `List`, `ListItem`, `Divider`
-- Formatting: `Bold`, `Italic`, `Code`, … inside `Message` text
+Compose rich text with `Bold`, `Italic`, `Code`, `Alert`, `List` / `ListItem`,
+and `Divider`. Use `<Notification>` to answer a callback query with a toast or
+alert.
+
+```tsx
+import { Message, Bold, Italic, Code } from "@teactjs/ui";
+
+<Message>
+  Hello <Bold>{userName}</Bold>, run <Code>/start</Code> to begin.
+</Message>;
+```
+
+<Callout type="warn">
+  When formatting components render in HTML mode, **user content is auto-escaped**
+  for you. Do **not** hand-concatenate raw HTML into `text`. If you set
+  `parseMode="HTML"` yourself on a `<Message>`, your text is passed **verbatim**
+  and you own the escaping.
+</Callout>
 
 ## Resilience
 
-- `SuspenseFallback` — loading line for `Suspense` boundaries
-- `ErrorBoundary` — catch render errors with a fallback UI
+- `SuspenseFallback` — a loading line for `Suspense` boundaries.
+- `ErrorBoundary` — catch render errors and show a fallback UI (also re-exported
+  from `@teactjs/core`).
 
-Full prop details mirror Telegram Bot API fields — see [@teactjs/react](/docs/packages/react).
+## Do / Don't
+
+- **Do** let a bare `<Button>` be its own row, or use `columns={n}` to auto-grid;
+  reach for `<ButtonRow>` only when you need explicit rows.
+- **Do** put user-supplied text inside `<Bold>`/`<Code>` etc. and let the engine
+  escape it.
+- **Don't** hand-concatenate HTML into message text — that bypasses escaping.
+- **Don't** try to edit a text message onto a media message (or vice-versa) in
+  place; the engine sends a **new** message instead.
+- **Don't** rely on 11+ items in a `<MediaGroup>` or 5000-char text — Telegram
+  limits are clamped.

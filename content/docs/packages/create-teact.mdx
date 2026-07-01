@@ -1,36 +1,47 @@
 ---
 title: create-teact
-description: Interactive scaffolder — bun create teact, templates, features, and generated file layout.
+description: Scaffold a new Teact bot — bun create teact, templates, and feature toggles.
 ---
+
+
+`create-teact` scaffolds a ready-to-run Teact project: `package.json`, `tsconfig.json`,
+`teact.config.ts`, `.env`, and a `src/` tree that varies by the **template** and **features** you
+pick.
 
 ```bash
 bun create teact my-bot
-# npx create-teact / pnpm create teact
+# also: npm create teact / pnpm create teact
 ```
 
-## What it generates
-
-- `package.json`, `tsconfig.json`, `teact.config.ts`, `.env`, `.gitignore`
-- `src/` entry, pages, hooks — varies by **template** and **features**
+Run it with no flags for the interactive picker, or pass flags to the underlying
+[`teact create`](/docs/packages/cli): `-t/--template`, `-f/--features`, `--pm`, `--no-install`.
 
 ## Templates
 
-| Name | CLI flag | Notes |
-| ---- | -------- | ----- |
-| Starter | `starter` / `router` | Main menu; features add routes |
-| Showcase | `showcase` / `full` | Demo app; features toggle plugins |
-| Counter | `counter` | Single screen |
-| Empty | `empty` | No router |
+| Name | Aliases | Notes |
+| ---- | ------- | ----- |
+| `starter` | `router` | Main menu + About; features add routes |
+| `showcase` | `full` | Full demo (Pokedex, streaming, component showcase, guards, deep links) |
+| `counter` | — | Single-screen state demo |
+| `empty` | — | One `Message`, no router |
 
 ## Features
 
-| Feature | Adds (typical) |
-| ------- | ---------------- |
-| Storage | `storagePlugin`, settings-style page |
-| Conversations | `conversationsPlugin`, flows |
-| Streaming | `streamPlugin`, stream demo |
-| Auth | `authPlugin`, guarded routes |
-| i18n | Locales, language page |
-| Payments | `useInvoice` demo, provider token in `.env` |
+Selected in the picker (comma-separated with `-f`):
 
-Templates are maintained in **`create-teact/lib`** and mirrored into **`@teactjs/cli`** on build.
+| Feature | Adds |
+| ------- | ---- |
+| `storage` | `storagePlugin` + persistent state via `useStorage` |
+| `conversations` | `conversationsPlugin` + multi-step flows |
+| `streaming` | `streamPlugin` + live text via `useStream` |
+| `auth` | `useAuthSession` + route guards |
+| `payments` | Telegram invoices via `useInvoice` |
+
+<Callout type="info">
+`i18n` is a built-in feature — it is always merged into the scaffold and is not shown in the picker.
+The `showcase` template enables `storage`, `conversations`, `streaming`, `auth`, and `payments` by
+default.
+</Callout>
+
+After scaffolding, add your `TELEGRAM_BOT_TOKEN` to `.env` and run `teact dev`. See
+[Getting started](/docs/getting-started) for the full walkthrough.

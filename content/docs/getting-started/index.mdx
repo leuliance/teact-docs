@@ -7,8 +7,17 @@ This section walks you from **empty machine** to **running bot** with clear step
 
 ## Path through the docs
 
-1. **[Installation](/docs/getting-started/installation)** — Prerequisites, `bun create teact`, and dependencies.
-2. **[Quick start](/docs/getting-started/quick-start)** — Token, `bun dev`, and a minimal mental model.
-3. **[Configuration](/docs/getting-started/configuration)** — `teact.config.ts`, plugins, and environment variables.
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation" description="Prerequisites, bun create teact, and dependencies." />
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="Token, bun dev, and a minimal mental model." />
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="teact.config.ts, plugins, sessions, and the edge caveat." />
+  <Card title="Troubleshooting" href="/docs/getting-started/troubleshooting" description="Common startup issues and their fixes." />
+</Cards>
+
+<Callout type="info">
+  Import **components** from `@teactjs/ui` and **everything else** (`createBot`, hooks, the router,
+  `defineConfig`) from `@teactjs/core`. The old `@teactjs/react`, `@teactjs/runtime`, and
+  `@teactjs/renderer` packages were folded into `@teactjs/core`.
+</Callout>
 
 When you are comfortable here, open **[Router](/docs/guides/router)** and **[Commands](/docs/guides/commands)** to structure real bots.

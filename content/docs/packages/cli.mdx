@@ -1,7 +1,11 @@
 ---
 title: "@teactjs/cli"
-description: teact CLI — create, dev, build, generate, doctor.
+description: The teact CLI — dev, build, start, deploy, webhook, generate, doctor, routes, and typecheck.
 ---
+
+
+The `teact` command drives a project through development, building, deployment, and diagnostics.
+It is installed as a dev dependency by `create-teact`, so most projects already have it.
 
 ```bash
 bun add -D @teactjs/cli
@@ -11,19 +15,29 @@ bun add -D @teactjs/cli
 
 | Command | Purpose |
 | ------- | ------- |
-| `teact create <name>` | Scaffold project (`-t` template, `-f` features, `--pm`, `--no-install`) |
-| `teact dev` | Dev server + HMR (`-e` entry) |
-| `teact build` | Production build to `dist/` |
-| `teact generate component X` | Boilerplate component / hook / plugin |
-| `teact doctor` | Environment + project diagnostics |
+| `teact dev` | Development server with hot reload (`-e, --entry <file>`) |
+| `teact build` | Build for production to `dist/` (`-e`, `--no-minify`, `--no-sourcemap`) |
+| `teact start` | Run the production build (`dist/index.js`) — run `teact build` first |
+| `teact deploy [target]` | Scaffold & deploy to a serverless platform (default `cloudflare`; `--run` to execute the platform command) |
+| `teact webhook <action> [url]` | Manage the Telegram webhook: `set <url>` / `delete` / `info` (`--secret`, `--drop`) |
+| `teact generate <type> <name>` | Generate a `component`, `hook`, or `plugin` |
+| `teact doctor` | Check your environment and project setup |
+| `teact routes` | List registered routes in the project |
+| `teact typecheck` | Type-check with `tsc --noEmit` |
 
-### Templates
+<Callout type="info">
+`teact create <name>` also exists for scaffolding, but new projects usually start with
+[`bun create teact`](/docs/packages/create-teact).
+</Callout>
 
-- **starter** — menu + optional feature routes
-- **showcase** — full demo (Pokedex, guards, commands)
-- **counter** — minimal counter
-- **empty** — single message, no router
+## Typical workflow
 
-### Features flag
+```bash
+teact dev              # develop with hot reload
+teact typecheck        # verify types
+teact build            # produce dist/
+teact webhook set https://example.com/api/bot --secret $SECRET
+teact deploy cloudflare --run
+```
 
-Comma-separated: `storage`, `conversations`, `streaming`, `auth`, `i18n`, `payments`
+See the [Deployment guide](/docs/guides/deployment) for platform-specific setup.

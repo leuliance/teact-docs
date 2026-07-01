@@ -1,33 +1,70 @@
 ---
 title: Streaming
-description: useStream for live-updating message text with streamPlugin on the bot.
+description: useStream for live-updating message text, with streamPlugin on the bot.
 ---
+
+
+Streaming edits one message in place as tokens arrive — ideal for LLM output.
+`useStream` comes from `@teactjs/core`; the delivery plugin comes from
+`@teactjs/telegram`.
 
 ## Runtime
 
 ```tsx
 import { useStream } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 
-const { text, isStreaming, stream } = useStream({ throttleMs: 100 });
+function Chat() {
+  const { text, isStreaming, stream } = useStream({ throttleMs: 100 });
 
-async function run() {
-  await stream(tokenAsyncIterable());
+  return (
+    <Message text={isStreaming ? text : `Done: ${text}`}>
+      <InlineKeyboard>
+        <Button
+          text={isStreaming ? "Streaming…" : "Start"}
+          onClick={() => stream(generateTokens())}
+        />
+      </InlineKeyboard>
+    </Message>
+  );
 }
-
-return <Message text={isStreaming ? text : `Done: ${text}`} />;
 ```
+
+`stream(source)` accepts an `AsyncIterable<string>` and kicks off streaming
+(it returns `void`, not a promise). `throttleMs` sets the minimum interval
+between re-renders (default `500`) to avoid Telegram rate limits.
 
 ## Telegram plugin
 
-Register `streamPlugin` from `@teactjs/telegram` in `createBot` plugins so the adapter can deliver partial text updates.
+Register `streamPlugin()` from `@teactjs/telegram` so the adapter can deliver
+partial-text edits:
 
 ```ts
+import { createBot } from "@teactjs/core";
 import { streamPlugin } from "@teactjs/telegram";
 
 const bot = createBot({
-  plugins: [streamPlugin()],
   // ...
+  plugins: [streamPlugin()],
 });
 ```
 
-See [Telegram adapter](/docs/guides/telegram-adapter).
+## Serverless caveat
+
+<Callout type="warn">
+  **Streaming works on long-running polling, not on serverless/edge.** On
+  Cloudflare Workers / Vercel / Deno Edge the isolate **freezes** once the
+  `Response` resolves, so anything after the first commit — including `useStream`
+  token deliveries — is dropped. Rendering and the initial reply still complete,
+  but the live updates do not.
+</Callout>
+
+## Do / Don't
+
+- **Do** set a sensible `throttleMs` (100–500ms) to stay under Telegram's edit
+  rate limit.
+- **Do** run streaming bots via `bot.start()` polling (or a persistent server).
+- **Don't** rely on `useStream` in a `bot.fetch(...)` edge handler — the isolate
+  freezes after the first commit.
+- **Don't** `await stream(...)` expecting a result — it returns `void`; read
+  progress from `text` / `isStreaming`.

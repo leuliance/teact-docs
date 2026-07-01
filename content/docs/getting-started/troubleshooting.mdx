@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Fixes for common Teact issues — teact command not found, a bot that won't respond, and TypeScript/JSX errors.
+description: Fixes for common Teact issues — command not found, a bot that won't respond, edge gotchas, and TypeScript/JSX errors.
 ---
 
 Quick fixes for the issues you're most likely to hit when starting out. Running `teact doctor`
@@ -8,27 +8,21 @@ inside a project also checks your setup and suggests fixes.
 
 ## `teact: command not found`
 
-This means the local `teact` binary in `node_modules/.bin` was never created — almost always because
-`bun install` did not complete successfully.
+Fresh `bun create teact` installs now resolve this automatically — the scaffolder pins a published
+`@teactjs/cli` version so the local `teact` binary always lands in `node_modules/.bin`. If you still
+see it in an older or hand-assembled project:
 
-1. Re-run install from the project root:
+1. Re-run install from the project root so the binary is (re)created:
 
    ```bash
    bun install
    ```
 
-2. Make sure `@teactjs/cli` is listed in your `package.json` (under `devDependencies` or
-   `dependencies`). The `dev`, `build`, and `start` scripts all rely on it.
+2. Make sure `@teactjs/cli` is in your `package.json` (`devDependencies` or `dependencies`). The
+   `dev`, `build`, and `start` scripts all rely on it.
 
-3. Make sure you're on the latest release. `bun create teact` always pulls the newest published
-   version:
-
-   ```bash
-   bun create teact my-bot
-   ```
-
-Run scripts through your package manager (`bun dev`, `bun run build`) so the local binary on
-`node_modules/.bin` is used.
+3. Run scripts through your package manager (`bun dev`, `bun run build`) so the local binary on
+   `node_modules/.bin` is used rather than a missing global one.
 
 ## Bot doesn't respond
 
@@ -44,10 +38,39 @@ If the bot starts but never replies to messages:
 
 - **Only run one polling instance.** Telegram allows a single `getUpdates` consumer per token. If a
   second `bun dev` (or a deployed instance) is polling the same token, neither will receive updates
-  reliably. Stop the duplicate, or switch one to webhook mode.
+  reliably. Stop the duplicate, or switch one to webhook mode. Guarding `bot.start()` behind
+  `if (import.meta.main)` prevents accidental double-starts when the file is imported.
 
 - **Send `/start` or a message** to the bot in Telegram, and watch the dev console for incoming
   updates.
+
+## Edge / serverless gotchas
+
+On Cloudflare Workers, Vercel Edge, and Deno Deploy the isolate **freezes once the `Response`
+resolves**, and there is **no filesystem**. Rendering and the reply itself complete before
+`bot.fetch()` returns, but background work does not survive. The most common surprises:
+
+- **`teact.config.ts` is ignored** (loading it needs `fs`). Pass `plugins` and other options directly
+  to `createBot({ plugins })`.
+- **In-memory session doesn't persist.** Provide a durable `SessionStore` (KV/Redis/DB) via
+  `createBot({ session: { store } })`.
+- **The `'file'` storage driver can't write** — it warns and degrades to memory. Use a custom
+  async-backed `StorageDriver`.
+- **Post-commit side effects are dropped.** `useStream`, `useQuery`, and work in `useEffect`/`useOn`
+  that runs after the first commit won't finish before the freeze. These are fine under long-running
+  polling.
+
+See [Deployment](/docs/guides/deployment) for the full edge setup.
+
+## Text renders with stray tags or won't send
+
+- **Don't hand-concatenate HTML** into message text. Content inside `<Bold>`, `<Italic>`, `<Code>`, and
+  plain message text is **auto-escaped** when HTML mode is active. If you set `parseMode="HTML"`
+  yourself on a `<Message>`, your text is passed **verbatim** and you own the escaping.
+- **Message limits are clamped**, not errored: text is capped at 4096 chars, captions at 1024, and
+  media groups at 2–10 items (a single item is sent as a normal media message).
+- **You can't edit text onto a photo in place** (or vice-versa). The engine sends a new message when
+  the media kind changes instead of editing.
 
 ## TypeScript / JSX errors
 

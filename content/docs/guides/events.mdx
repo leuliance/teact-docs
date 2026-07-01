@@ -3,9 +3,13 @@ title: Events
 description: useOn and useEventData for Telegram updates — messages, callbacks, payments, and wildcards.
 ---
 
+
+Both hooks come from **`@teactjs/core`**. Use them to react to raw Telegram
+updates that don't map cleanly to a screen.
+
 ## useOn
 
-Subscribe to updates:
+Subscribe to an update type:
 
 ```tsx
 import { useOn } from "@teactjs/core";
@@ -20,6 +24,8 @@ useOn("message:text", (ctx) => {
 Read the latest payload for an event type:
 
 ```tsx
+import { useEventData } from "@teactjs/core";
+
 const photo = useEventData("message:photo");
 ```
 
@@ -30,4 +36,16 @@ const photo = useEventData("message:photo");
 - `pre_checkout_query`, `successful_payment`
 - `*` — all events (use sparingly)
 
-Pair with [Hooks](/docs/guides/hooks) for chat id, text, and callback data accessors.
+<Callout type="warn">
+  Raw Telegram update fields are **snake_case** — e.g. `callback_query`,
+  `pre_checkout_query`, `successful_payment`. Match those names exactly, not
+  camelCase.
+</Callout>
+
+<Callout type="info">
+  On serverless/edge, an effect scheduled by `useOn` that runs **after** the first
+  commit won't survive the isolate freeze — fine for long-running polling. See
+  [Streaming](/docs/guides/streaming).
+</Callout>
+
+Pair with [Hooks](/docs/guides/hooks) for chat id, text, and command accessors.

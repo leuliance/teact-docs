@@ -1,13 +1,12 @@
 ---
 title: "@teactjs/telegram"
-description: TelegramAdapter plus grammY-powered plugins for conversations and streaming — polling and webhooks.
+description: TelegramAdapter (grammY driver) plus conversation and streaming plugins, serializeOutput, and defineConversation.
 ---
 
-The production transport for Teact. `TelegramAdapter` bridges the renderer to the Telegram Bot API
-(via grammY) and supports both polling and webhook modes. The package also ships imperative
-conversation and streaming plugins.
 
-## Install
+The production transport for Teact. `TelegramAdapter` bridges the core reconciler to the Telegram
+Bot API via grammY and supports both polling and webhook (edge) modes. The package also ships the
+imperative conversation and streaming plugins.
 
 ```bash
 bun add @teactjs/telegram
@@ -18,16 +17,17 @@ bun add @teactjs/telegram
 | Export | Kind | Description |
 | ------ | ---- | ----------- |
 | `TelegramAdapter` | class | Adapter passed to `createBot({ adapter })`. |
+| `serializeOutput` | function | Serialize a rendered output tree to a Telegram send payload. |
 | `conversationsPlugin` | plugin | Enables imperative async/await conversation flows. |
 | `defineConversation` | function | Declare a named conversation handler. |
-| `streamPlugin` | plugin | Enables token streaming into a message. |
-| `serializeOutput` | function | Serialize a render tree to a Telegram send payload. |
-| `TelegramAdapterConfig` | type | Adapter options (token, polling, webhook). |
-| `Conversation`, `ConversationHandler`, `ConversationDef` | types | Conversation typings. |
+| `streamPlugin` | plugin | Enables token streaming into a message (`useStream`). |
+| `TelegramAdapterConfig`, `TelegramSendPayload` | types | Adapter options and payload shape. |
+| `Conversation`, `ConversationHandler`, `ConversationDef`, `ConversationsPluginOptions`, `ConversationsConfig`, `MediaGroupItem` | types | Conversation typings. |
 
 ## Polling (default)
 
-`new TelegramAdapter()` reads `TELEGRAM_BOT_TOKEN` from the environment via `createBot`:
+`new TelegramAdapter()` reads the bot token from the environment (via `createBot`). Guard the
+polling call so it does not run when the module is imported (e.g. on edge):
 
 ```ts
 import { createBot } from "@teactjs/core";
@@ -38,21 +38,35 @@ const bot = createBot({
   adapter: new TelegramAdapter(),
 });
 
-await bot.start();
+if (import.meta.main) bot.start();
 ```
+
+## Webhook / edge
+
+On serverless runtimes, call `bot.fetch(request, { token, secretToken })` from your handler instead
+of `start()`. The isolate freezes once the `Response` resolves, so pass plugins directly to
+`createBot({ plugins })` (the config file is not loaded on edge) and provide a durable
+`SessionStore`.
 
 ## Conversations
 
 ```ts
 import { conversationsPlugin, defineConversation } from "@teactjs/telegram";
 
-defineConversation("onboarding", async (convo) => {
+const onboarding = defineConversation("onboarding", async (convo) => {
   const name = await convo.prompt("What's your name?");
   await convo.send(`Welcome, ${name}!`);
 });
 
-// plugins: [conversationsPlugin(), ...]
+// createBot({ plugins: [conversationsPlugin()] })
 ```
 
-See the [Telegram adapter guide](/docs/guides/telegram-adapter) for polling vs webhook setup, and
-[grammY](https://grammy.dev) for advanced Bot API usage.
+## Streaming
+
+```ts
+import { streamPlugin } from "@teactjs/telegram";
+// createBot({ plugins: [streamPlugin()] }) — then useStream() in a component
+```
+
+See the [Telegram adapter guide](/docs/guides/telegram-adapter) for polling vs webhook setup, the
+[Conversations guide](/docs/guides/conversations), and the [Streaming guide](/docs/guides/streaming).

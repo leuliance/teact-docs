@@ -1,23 +1,22 @@
 ---
 title: "@teactjs/ui"
-description: The component layer — Message, keyboards, media, polls, formatting, and data hooks. Re-exports @teactjs/react.
+description: The component layer — Message, keyboards, media, polls, formatting, layout, and the re-exported data hooks.
 ---
 
-The UI package is where every Teact component lives. It re-exports `@teactjs/react`, so it is
-functionally **identical** — pick whichever import path fits your codebase. Use it (or `@teactjs/core`,
-which re-exports the same components) for all UI; the engine and hooks come from `@teactjs/core`.
 
-## Install
+`@teactjs/ui` is where every Teact component lives. Import your UI from here; the engine and hooks
+come from [`@teactjs/core`](/docs/packages/core). Components render through the core reconciler, so
+the two packages are always used together.
 
 ```bash
 bun add @teactjs/ui
 ```
 
-## Components
-
 ```tsx
-import { Message, Button, InlineKeyboard, ButtonRow } from "@teactjs/ui";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 ```
+
+## Components
 
 - **Messaging:** `Message`, `Notification`, `Alert`
 - **Inline keyboards:** `InlineKeyboard`, `ButtonRow`, `Button`, `WebAppButton`
@@ -28,16 +27,14 @@ import { Message, Button, InlineKeyboard, ButtonRow } from "@teactjs/ui";
 - **Layout:** `List`, `ListItem`, `Divider`
 - **Resilience:** `ErrorBoundary`, `SuspenseFallback`
 
-Both flat (`<Bold>`, `<ButtonRow>`) and dot-notation (`<Message.Bold>`, `<InlineKeyboard.Row>`,
-`<Button.WebApp>`, `<List.Item>`) styles work.
-
 ## Data hooks
 
-```tsx
-import { useQuery, useMutation } from "@teactjs/ui";
-```
+`useQuery` and `useMutation` are re-exported from `@teactjs/core` for convenience, so you can pull
+components and data hooks from one import:
 
-`useQuery` / `useMutation` cover async fetching and writes from within components.
+```tsx
+import { Message, useQuery } from "@teactjs/ui";
+```
 
 ## Example
 
@@ -58,4 +55,9 @@ function Counter() {
 }
 ```
 
-See the [UI components guide](/docs/guides/components) for per-component props.
+<Callout type="info">
+A bare `<Button>` becomes its own row. Use `<InlineKeyboard columns={2}>` to auto-grid buttons into
+N-column rows, or wrap buttons in `<ButtonRow>` for one explicit row.
+</Callout>
+
+See the [Components guide](/docs/guides/components) for per-component props and layout rules.

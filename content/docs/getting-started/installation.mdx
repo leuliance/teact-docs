@@ -50,13 +50,20 @@ See [CLI](/docs/packages/cli) for all commands (`generate`, `doctor`, flags).
 
 ## Existing project
 
-Add the packages you need:
+Add the core engine, the components package, and the Telegram adapter:
 
 ```bash
-bun add @teactjs/core @teactjs/telegram
+bun add @teactjs/core @teactjs/ui @teactjs/telegram
 ```
 
-Optional: `@teactjs/storage`, `@teactjs/testing` (dev), etc. Most APIs are re-exported from `@teactjs/core` for convenience.
+Optional add-ons: `@teactjs/storage` (persistence), `@teactjs/plugin-sdk` (author plugins), `@teactjs/testing` (dev/test).
+
+<Callout type="info">
+  Import **components** (`Message`, `Button`, `InlineKeyboard`, …) from `@teactjs/ui`. Import
+  `createBot`, the router, hooks, and `defineConfig` from `@teactjs/core`. The old
+  `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer` packages no longer exist — they were
+  folded into `@teactjs/core`.
+</Callout>
 
 ## Verify
 

@@ -3,16 +3,45 @@ title: Payments
 description: useInvoice for Telegram native invoices — titles, prices, currency, and provider token.
 ---
 
+
+`useInvoice` from **`@teactjs/core`** sends Telegram native invoices and tracks
+the payment lifecycle for you.
+
 ```tsx
 import { useInvoice } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 
-const { send, status, receipt, error } = useInvoice({
-  title: "Premium",
-  description: "Monthly",
-  currency: "USD",
-  prices: [{ label: "Plan", amount: 999 }],
-  providerToken: process.env.PAYMENT_PROVIDER_TOKEN!,
-});
+function Checkout() {
+  const { send, status, receipt, error } = useInvoice({
+    title: "Premium",
+    description: "Monthly subscription",
+    currency: "USD",
+    prices: [{ label: "Plan", amount: 999 }], // amount is in the smallest unit
+    providerToken: process.env.PAYMENT_PROVIDER_TOKEN!,
+  });
+
+  if (status === "paid") return <Message text={`Thanks! Charge: ${receipt?.telegramPaymentChargeId}`} />;
+  if (error) return <Message text={`Payment failed: ${error.message}`} />;
+
+  return (
+    <Message text="Upgrade to Premium">
+      <InlineKeyboard>
+        <Button text="Pay $9.99" onClick={() => send()} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
 ```
 
-Set **`PAYMENT_PROVIDER_TOKEN`** (or your template’s env name) from your payment provider. Handle `pre_checkout_query` / `successful_payment` via [Events](/docs/guides/events) if you need server-side validation beyond the default flow.
+- `send()` — issue the invoice to the current chat.
+- `status` — the current payment state (`idle` → `pending` → `paid`, or failed).
+- `receipt` — the `SuccessfulPayment` once the charge completes.
+- `error` — set if the flow fails.
+
+Prices use `LabeledPrice` (`{ label, amount }`) where `amount` is in the
+currency's smallest unit (e.g. cents), matching the Telegram Bot API.
+
+Set **`PAYMENT_PROVIDER_TOKEN`** (or your template's env name) from your payment
+provider. `useInvoice` answers `pre_checkout_query` and resolves on
+`successful_payment` automatically. If you need custom server-side validation
+beyond that, hook into those updates via [Events](/docs/guides/events).

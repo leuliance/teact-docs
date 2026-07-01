@@ -4,10 +4,9 @@
   "pages": [
     "index",
     "core",
-    "react",
-    "runtime",
     "ui",
     "telegram",
+    "plugin-sdk",
     "storage",
     "testing",
     "cli",

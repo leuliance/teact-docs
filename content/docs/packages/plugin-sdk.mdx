@@ -1,0 +1,77 @@
+---
+title: "@teactjs/plugin-sdk"
+description: Author your own Teact plugins with definePlugin — register middleware, providers, DI services, and lifecycle hooks.
+---
+
+
+`@teactjs/plugin-sdk` is the authoring kit for Teact plugins. Call `definePlugin` to describe a
+plugin once and get back a factory you drop into `createBot({ plugins })` or `teact.config.ts`. The
+plugin host that *runs* plugins lives in [`@teactjs/core`](/docs/packages/core) — this package is
+only what you need to build one.
+
+```bash
+bun add @teactjs/plugin-sdk
+```
+
+## Exports
+
+| Export | Kind | Description |
+| ------ | ---- | ----------- |
+| `definePlugin` | function | `definePlugin({ name, defaultConfig?, setup })` → a `PluginFactory`. |
+| `PluginContext` | type | The context handed to `setup`. |
+| `PluginDefinition` | type | Shape of the object passed to `definePlugin`. |
+| `PluginFactory` | type | The returned factory: `(config?) => TeactPlugin`. |
+| `TeactPlugin`, `ServiceMap`, `Adapter`, `Middleware` | types | Re-exported from `@teactjs/core` so authors have one import. |
+
+## PluginContext
+
+`setup(ctx)` receives a `PluginContext<C>`. Register everything the plugin contributes here:
+
+| Member | Signature | Purpose |
+| ------ | --------- | ------- |
+| `config` | `C` | Resolved config (`defaultConfig` merged under the user's config). |
+| `middleware` | `(fn: Middleware) => void` | Run on every incoming update. |
+| `addProvider` | `(Comp: FunctionComponent<{ children }>) => void` | Wrap the app tree with a React provider (providers nest in order). |
+| `provideService` | `(key: string, value: unknown) => void` | Register a DI service, read later with `useService(key)`. |
+| `onStart` | `(fn: (adapter: Adapter) => void \| Promise<void>) => void` | Run when the bot starts (after the adapter connects). |
+| `onStop` | `(fn: () => void \| Promise<void>) => void` | Run on shutdown. |
+
+## Example
+
+```ts
+// my-supabase-plugin.ts
+import { definePlugin } from "@teactjs/plugin-sdk";
+import { createClient } from "@supabase/supabase-js";
+
+export const supabase = definePlugin<{ url: string; key: string }>({
+  name: "supabase",
+  setup(ctx) {
+    ctx.provideService("supabase", createClient(ctx.config.url, ctx.config.key));
+  },
+});
+```
+
+Register it, then read the service anywhere with `useService`:
+
+```ts
+// teact.config.ts
+import { defineConfig } from "@teactjs/core";
+import { supabase } from "./my-supabase-plugin";
+
+export default defineConfig({
+  plugins: [supabase({ url: process.env.SUPABASE_URL!, key: process.env.SUPABASE_KEY! })],
+});
+```
+
+```tsx
+import { useService } from "@teactjs/core";
+const db = useService<SupabaseClient>("supabase");
+```
+
+<Callout type="info">
+On edge runtimes, `teact.config.ts` is not loaded — pass plugins directly via
+`createBot({ plugins })`.
+</Callout>
+
+See the [Middleware & plugins guide](/docs/guides/middleware-plugins) for the full plugin lifecycle
+and DI patterns.

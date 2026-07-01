@@ -107,21 +107,22 @@ export default function HomePage() {
       <section className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center px-6 pb-16 pt-14 text-center md:pb-24 md:pt-20">
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-600/20 bg-cyan-500/10 px-3 py-1 text-xs font-medium tracking-wide text-cyan-900 backdrop-blur-sm dark:border-cyan-500/25 dark:text-cyan-200/90">
           <Sparkles className="size-3.5 text-cyan-600 dark:text-cyan-300" aria-hidden />
-          Telegram bots with a React mental model
+          React for the Telegram Bot API
         </div>
 
         <h1
-          className={`${display.className} max-w-4xl text-5xl font-extrabold leading-[1.05] tracking-tight text-zinc-900 sm:text-6xl md:text-7xl dark:text-white`}
+          className={`${display.className} max-w-4xl pb-2 text-5xl font-extrabold leading-[1.12] tracking-tight text-zinc-900 sm:text-6xl md:text-7xl dark:text-white`}
         >
-          Build bots that{' '}
-          <span className="bg-linear-to-r from-cyan-600 via-sky-600 to-indigo-600 bg-clip-text text-transparent dark:from-cyan-300 dark:via-sky-400 dark:to-indigo-400">
-            feel like apps
+          React took over the web.{' '}
+          <span className="inline-block bg-linear-to-r from-cyan-600 via-sky-600 to-indigo-600 bg-clip-text pb-1 text-transparent dark:from-cyan-300 dark:via-sky-400 dark:to-indigo-400">
+            Bots are next.
           </span>
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-zinc-600 md:text-xl dark:text-zinc-400">
-          <strong className="font-semibold text-zinc-900 dark:text-zinc-200">Teact</strong> turns JSX, hooks, routing, and
-          keyboards into Telegram experiences — with a runtime tuned for grammY and Bun.
+          The web builds its best interfaces with React. In a world moving fast on AI,{' '}
+          <strong className="font-semibold text-zinc-900 dark:text-zinc-200">Teact</strong> brings the same
+          components, hooks, and routing to Telegram — bots that feel like apps, powered by grammY and Bun.
         </p>
 
         <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-center">
@@ -230,7 +231,7 @@ export default function HomePage() {
               <ul className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-300">
                 <li className="flex items-center gap-2">
                   <span className="size-1.5 rounded-full bg-cyan-500" />
-                  @teactjs/core, react, runtime, telegram
+                  @teactjs/core, ui, telegram, plugin-sdk
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="size-1.5 rounded-full bg-sky-500" />

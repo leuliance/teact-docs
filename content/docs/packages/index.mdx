@@ -1,18 +1,25 @@
 ---
 title: Packages
-description: npm packages in the Teact monorepo — what to install and when to use each scope.
+description: The npm packages that make up Teact — what to install and when to use each scope.
 ---
+
+Teact ships as a small set of scoped packages. `@teactjs/core` is the engine (reconciler, runtime,
+router, hooks, plugin host, and the re-exported React primitives); `@teactjs/ui` holds the visual
+components. Everything else is optional and layers on top.
 
 | Package | Install | Use when |
 | ------- | ------- | -------- |
-| [@teactjs/core](/docs/packages/core) | `bun add @teactjs/core` | You want one import for UI + runtime |
-| [@teactjs/react](/docs/packages/react) | `bun add @teactjs/react` | UI-only imports |
-| [@teactjs/runtime](/docs/packages/runtime) | `bun add @teactjs/runtime` | Bot engine without UI barrel |
-| [@teactjs/ui](/docs/packages/ui) | `bun add @teactjs/ui` | Same as react, different import path |
-| [@teactjs/telegram](/docs/packages/telegram) | `bun add @teactjs/telegram` | Production Telegram transport |
-| [@teactjs/storage](/docs/packages/storage) | `bun add @teactjs/storage` | Disk / memory / custom persistence |
-| [@teactjs/testing](/docs/packages/testing) | `bun add -D @teactjs/testing` | Unit tests |
-| [@teactjs/cli](/docs/packages/cli) | `bun add -D @teactjs/cli` | Local `teact` commands |
-| [create-teact](/docs/packages/create-teact) | `bun create teact` | New projects |
+| [@teactjs/core](/docs/packages/core) | `bun add @teactjs/core` | The engine: `createBot`, router, all hooks, plugins, React re-exports |
+| [@teactjs/ui](/docs/packages/ui) | `bun add @teactjs/ui` | Components: `Message`, keyboards, media, formatting |
+| [@teactjs/telegram](/docs/packages/telegram) | `bun add @teactjs/telegram` | Production Telegram transport (grammY driver) |
+| [@teactjs/plugin-sdk](/docs/packages/plugin-sdk) | `bun add @teactjs/plugin-sdk` | Authoring your own plugins with `definePlugin` |
+| [@teactjs/storage](/docs/packages/storage) | `bun add @teactjs/storage` | Memory / file / custom key-value persistence |
+| [@teactjs/testing](/docs/packages/testing) | `bun add -D @teactjs/testing` | Unit-testing bots without hitting Telegram |
+| [@teactjs/cli](/docs/packages/cli) | `bun add -D @teactjs/cli` | Local `teact` commands (dev, build, deploy, …) |
+| [create-teact](/docs/packages/create-teact) | `bun create teact` | Scaffolding a new project |
 
-`@teactjs/renderer` is internal to the reconciler and not published for app use.
+<Callout type="info">
+`@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer` no longer exist — they were folded
+into `@teactjs/core`. Import the engine and every hook from `@teactjs/core`, and components from
+`@teactjs/ui`.
+</Callout>

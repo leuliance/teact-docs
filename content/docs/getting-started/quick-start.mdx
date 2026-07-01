@@ -41,8 +41,13 @@ const bot = createBot({
   token: process.env.TELEGRAM_BOT_TOKEN!,
 });
 
-await bot.start();
+if (import.meta.main) bot.start();
 ```
+
+<Callout type="info">
+  Guarding `bot.start()` behind `import.meta.main` keeps long-running polling out of the module when the
+  same file is imported elsewhere (e.g. a serverless handler that calls `bot.fetch(request)` instead).
+</Callout>
 
 ## Step 3 — Run
 
@@ -54,15 +59,26 @@ Open Telegram, find your bot, send a message or `/start`. You should see the cou
 
 ## Step 4 — Router (optional)
 
-For multiple screens, swap `component` for `router`:
+For multiple screens, swap `component` for a `router`. `createRouter(routes, options?)` maps paths to
+components:
 
 ```tsx
 import { createBot, createRouter } from "@teactjs/core";
-// const router = createRouter({ "/": Home, "/about": About });
-// const bot = createBot({ router, adapter, token });
+import { TelegramAdapter } from "@teactjs/telegram";
+
+const router = createRouter({
+  "/": Home,
+  "/about": About,
+});
+
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  token: process.env.TELEGRAM_BOT_TOKEN!,
+});
 ```
 
-See [Router](/docs/guides/router) for guards, params, and navigation.
+`component` and `router` are mutually exclusive. See [Router](/docs/guides/router) for guards, params, and navigation.
 
 ## Step 5 — Bot commands (optional)
 

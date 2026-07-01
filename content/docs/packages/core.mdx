@@ -1,27 +1,126 @@
 ---
 title: "@teactjs/core"
-description: Main barrel — React primitives, components, runtime, and renderer types in one package.
+description: The Teact engine — createBot, the router, every hook, the plugin host, the React reconciler, and re-exported React primitives.
 ---
+
+
+`@teactjs/core` is the engine. It contains the React reconciler that turns your components into
+Telegram output, the runtime that drives a bot (`createBot`), the router, the plugin/DI host, and
+**every hook**. It also re-exports the React primitives you need so you rarely import `react`
+directly.
+
+This is the single import for everything that isn't a visual component — components live in
+[`@teactjs/ui`](/docs/packages/ui).
 
 ```bash
 bun add @teactjs/core
 ```
 
-## Exports (summary)
-
-- **React** — `useState`, `useEffect`, …, `createContext`, `Suspense`, …
-- **Components** — everything from `@teactjs/react` (`Message`, `Button`, keyboards, media, …)
-- **Runtime** — `createBot`, `createRouter`, hooks, `defineConfig`, plugins, i18n, …
-- **Renderer types** — `TNode`, `createRoot`, `TeactRoot`, `OutputNode`, `BotContext`, `SessionStore`, `Middleware`, …
-
 ```tsx
-import {
-  createBot,
-  createRouter,
-  Message,
-  Button,
-  useNavigate,
-} from "@teactjs/core";
+import { createBot, createRouter, useSession } from "@teactjs/core";
 ```
 
-Prefer **granular packages** (`@teactjs/react`, `@teactjs/runtime`) if you want explicit boundaries.
+## Exports
+
+### React primitives (re-exported)
+
+`useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`, `useContext`, `useId`,
+`use`, `createContext`, `memo`, `Fragment`, `createElement`, `Suspense`.
+
+### Engine & reconciler
+
+`createRoot`, `TNode`, `TextNode` — plus the platform-neutral types `TeactRoot`, `OutputNode`,
+`User`, `BotContext`, `SessionData`, `SessionStore`, `Middleware`, `Adapter`. Most apps never touch
+these directly; they are the contract adapters and plugins build against.
+
+### Bot
+
+`createBot`, `ROUTE_PREFIX`. Types: `CreateBotOptions`, `CommandContext`, `CommandDef`,
+`ReplyOptions`, `ReplyButton`, `ReplyKeyboardButton`, `WebhookConfig`.
+
+### Session & middleware
+
+`MemorySessionStore`, `compose`, `commandMiddleware`.
+
+### Router
+
+`createRouter`, `useNavigate`, `useParams`, `useRoute`, `redirect`. Types: `RouterConfig`,
+`NavigateOptions`, `NavigateMode`, `BeforeLoadContext`, `RouteGuard`, `GuardRedirect`,
+`GuardComponent`, `GuardReply`, `GuardReplyOptions`, `GuardButton`, `RouteValue`,
+`CreateRouterOptions`, `PathParams`, `RouteCommand`, `ResolvedRouteCommand`.
+
+### Flows
+
+`useConversation`, `useForm`, `useConversationContext`, `useFormContext`, `Conversation`, `Form`.
+
+### Streaming
+
+`useStream`; type `UseStreamResult`.
+
+### Auth
+
+`authPlugin`, `useAuth`, `useAuthSession`. Types: `AuthConfig`, `AuthState`, `AuthTokens`,
+`AuthSessionState`.
+
+### Plugins & dependency injection
+
+`TeactPlugin` (type), `ServicesCtx`, `useService`, `useOptionalService`; type `ServiceMap`. To
+*author* a plugin, use [`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk).
+
+### Config
+
+`defineConfig`; type `TeactConfig`.
+
+### Data hooks
+
+`useQuery`, `useMutation`, and `ErrorBoundary` (all also re-exported from `@teactjs/ui`).
+
+### Runtime context hooks
+
+`useBot`, `useSession`, `usePlatform`, `useChatId`, `useText`, `useCallbackData`, `useCommand`.
+
+### Telegram context hooks
+
+`useChat`, `useTelegram`, `usePhoto`, `useVideo`, `useAnimation`, `useAudio`, `useVoice`,
+`useDocument`, `useSticker`, `useLocation`, `useContact`, `useVenue`, `usePoll`, `useMedia`.
+
+### Events
+
+`useOn`, `useEventData`. Types: `TelegramEvent`, `EventContext`.
+
+### i18n
+
+`createI18n`, `useLocale`; type `I18nConfig`.
+
+### Payments
+
+`useInvoice`. Types: `InvoiceConfig`, `InvoiceResult`, `LabeledPrice`, `SuccessfulPayment`.
+
+## Example
+
+```tsx
+import { createBot, createRouter, useSession } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { TelegramAdapter } from "@teactjs/telegram";
+
+function Home() {
+  const [session] = useSession<{ name?: string }>();
+  return (
+    <Message text={`Hi ${session.name ?? "there"}!`}>
+      <InlineKeyboard>
+        <Button text="About" route="/about" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+const router = createRouter({
+  "/": { component: Home, command: { name: "start", description: "Start" } },
+});
+
+const bot = createBot({ router, adapter: new TelegramAdapter() });
+
+if (import.meta.main) bot.start();
+```
+
+See the [Router guide](/docs/guides/router) and [Hooks reference](/docs/guides/hooks) for details.

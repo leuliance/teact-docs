@@ -3,36 +3,59 @@ title: Introduction
 description: Build Telegram bots with React components, hooks, and file-style routing — powered by Teact and grammY.
 ---
 
-Teact lets you ship Telegram bots using the same mental model as React apps: **components**, **hooks**, **routing**, and **JSX**, compiled and run with Bun.
+<AlphaBadge>Teact is in alpha — the API may change before 1.0</AlphaBadge>
+
+Teact lets you ship Telegram bots using the same mental model as React apps: **components**, **hooks**, **routing**, and **JSX**, compiled and run with [Bun](https://bun.sh).
+
+```tsx
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <Message text={`Count: ${count}`}>
+      <InlineKeyboard columns={2}>
+        <Button text="−1" onClick={() => setCount((c) => c - 1)} />
+        <Button text="+1" onClick={() => setCount((c) => c + 1)} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
 
 <Cards>
   <Card title="Install & scaffold" href="/docs/getting-started/installation" description="Create a project and add your bot token." />
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="From zero to a running bot in a few minutes." />
   <Card title="Router & navigation" href="/docs/guides/router" description="createRouter, guards, and useNavigate." />
-  <Card title="UI components" href="/docs/guides/components" description="Message, keyboards, media, polls, and more." />
-  <Card title="Package index" href="/docs/packages" description="@teactjs/core, runtime, telegram, storage, CLI." />
+  <Card title="Deploy to the edge" href="/docs/guides/deployment" description="Cloudflare Workers & serverless with bot.fetch()." />
 </Cards>
 
 ## What you can build
 
-- **Messages & keyboards** — Inline and reply keyboards with `<Button>`, `<InlineKeyboard>`, `<ReplyKeyboard>`.
+- **Messages & keyboards** — inline and reply keyboards with `<Button>`, `<InlineKeyboard>`, `<ReplyKeyboard>`.
 - **Routing** — `createRouter` with params, `beforeLoad` guards, and navigation modes (`push`, `replace`, `stack`, `dismiss`).
-- **Flows** — Multi-step **conversations** and schema-driven **forms**.
-- **Platform features** — **Streaming** text, **i18n**, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** via `useOn`.
+- **Flows** — multi-step **conversations** and schema-driven **forms**.
+- **Platform features** — **streaming** text, **i18n**, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** via `useOn`.
+- **Deploy anywhere** — long-running polling _or_ serverless via a web-standard `bot.fetch(request)` handler.
 
 ## Packages at a glance
 
 | Package | Role |
 | -------- | ---- |
-| `@teactjs/core` | Single import for React + runtime + renderer types |
-| `@teactjs/react` | Telegram UI components and data hooks |
-| `@teactjs/runtime` | `createBot`, router, sessions, middleware, plugins |
-| `@teactjs/telegram` | grammY-based adapter (polling & webhook) |
-| `@teactjs/storage` | Persistent storage plugin |
+| `@teactjs/core` | The engine — `createBot`, router, hooks, plugin host, reconciler, and re-exported React |
+| `@teactjs/ui` | Components — `Message`, keyboards, media, polls, formatting |
+| `@teactjs/telegram` | grammY-based adapter (polling & webhook) + `conversationsPlugin` / `streamPlugin` |
+| `@teactjs/plugin-sdk` | `definePlugin` — author your own plugins |
+| `@teactjs/storage` | Persistent storage plugin (file/memory drivers; bring your own for KV/Redis) |
 | `@teactjs/testing` | `MockAdapter`, `renderBot` |
-| `@teactjs/cli` / `create-teact` | Dev server, build, scaffold |
+| `@teactjs/cli` / `create-teact` | Dev server, build, deploy, and scaffolding |
+
+<Callout type="info">
+  The 0.2.0 rewrite folded the old `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer`
+  packages into `@teactjs/core`. Import **components** from `@teactjs/ui` and **everything else**
+  from `@teactjs/core`.
+</Callout>
 
 ## Next steps
 
 1. Follow [Installation](/docs/getting-started/installation) and [Quick start](/docs/getting-started/quick-start).
-2. Skim [Configuration](/docs/getting-started/configuration) for `teact.config.ts` and plugins.
-3. Deep-dive guides under **Guides** in the sidebar.
+2. Skim [Configuration](/docs/getting-started/configuration) for `teact.config.ts`, plugins, and sessions.
+3. Deep-dive the [Guides](/docs/guides) in the sidebar — routing, components, conversations, deployment, and more.

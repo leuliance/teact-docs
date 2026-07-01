@@ -1,28 +1,41 @@
 ---
 title: Conversations
-description: useConversation, declarative Conversation components, and grammY conversationsPlugin for imperative flows.
+description: useConversation, the declarative Conversation component, and grammY conversationsPlugin for imperative flows.
 ---
+
+
+Conversations collect answers one step at a time. Use the `useConversation` hook
+or the `<Conversation>` component for JSX-driven flows, or `defineConversation` +
+`conversationsPlugin()` for imperative async/await flows.
 
 ## Hook API
 
-Multi-step flows with validation:
+Each step is either a `prompt` (free-text, optional `validate`) or an `ask`
+(inline-keyboard choice). Validators return `true` to accept or an error string.
 
 ```tsx
 import { useConversation } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
 
-const { step, value, actions } = useConversation({
-  name: {
-    prompt: "What's your name?",
-    validate: (v) => v.length > 0 || "Name required",
-  },
-  age: {
-    prompt: "How old are you?",
-    validate: (v) => (Number(v) > 0 ? true : "Must be a number"),
-  },
-});
+function Onboarding() {
+  const conv = useConversation({
+    name: {
+      prompt: "What's your name?",
+      validate: (v) => v.trim().length > 0 || "Name required",
+    },
+    color: { ask: "Pick a color:", options: [["Red", "Blue"]] },
+  });
+
+  return conv.render(() => (
+    <Message text={`Hi ${conv.data.name}, you picked ${conv.data.color}`} />
+  ));
+}
 ```
 
-Drive UI from `step`, show errors from validators, and commit with `actions`.
+`conv.render(onComplete)` renders the current step and calls `onComplete` when
+done. Read answers from `conv.data`; inspect `conv.current`, `conv.complete`,
+and `conv.lastError`; navigate with `conv.back()`, `conv.goTo(key)`, and
+`conv.reset()`.
 
 ## Declarative API
 
@@ -31,31 +44,55 @@ import { Conversation } from "@teactjs/core";
 import { Message } from "@teactjs/ui";
 
 <Conversation>
-  <Conversation.Prompt text="What's your name?" step="name" />
-  <Conversation.Prompt text="How old are you?" step="age" />
+  <Conversation.Prompt name="name" text="What's your name?" />
+  <Conversation.Ask name="color" text="Pick:" options={[["Red", "Blue"]]} />
   <Conversation.Complete>
-    {(data) => <Message text={`Hi ${data.name}, age ${data.age}`} />}
+    {(conv) => <Message text={`Hi ${conv.data.name}`} />}
   </Conversation.Complete>
-</Conversation>
+</Conversation>;
 ```
 
-## Trigger from buttons
+## Imperative flows (grammY)
 
-`Button` supports a **`conversation`** prop (string name) to enter a named flow when using the grammY conversations integration — see [Telegram adapter](/docs/guides/telegram-adapter).
-
-## grammY conversations (imperative)
-
-For async/await style flows outside JSX:
+For async/await style flows outside JSX, register `conversationsPlugin()` from
+`@teactjs/telegram` and define named conversations:
 
 ```ts
 import { conversationsPlugin, defineConversation } from "@teactjs/telegram";
+import { createBot } from "@teactjs/core";
 
 defineConversation("onboarding", async (convo) => {
   const name = await convo.prompt("What's your name?");
   await convo.send(`Welcome, ${name}!`);
 });
 
-// plugins: [conversationsPlugin(), ...]
+const bot = createBot({
+  // ...
+  plugins: [conversationsPlugin()],
+});
 ```
 
-The conversation object exposes `prompt`, `send`, `wait`, `ask`, `stream`, reply helpers, `requestContact`, `requestLocation`, and `api` / `raw` access.
+Enter a named flow from a button with the `conversation` prop:
+
+```tsx
+<Button text="Start" conversation="onboarding" />
+```
+
+<Callout type="info">
+  The `conversation` prop and imperative flows require `conversationsPlugin()` —
+  it drives the grammY conversation engine. Without it the button does nothing.
+</Callout>
+
+The `convo` object exposes `prompt`, `send`, `wait`, `ask`, `stream`, reply
+helpers, `requestContact`, `requestLocation`, and `api` / `raw` access.
+
+## Do / Don't
+
+- **Do** return `conv.render(() => <Done />)` — it handles the current step and
+  completion for you.
+- **Do** register `conversationsPlugin()` before using `defineConversation` or the
+  `conversation` button prop.
+- **Don't** read `conv.data.field` before the step is answered — check
+  `conv.current` / `conv.complete` first.
+- **Don't** expect imperative conversations to run on serverless/edge — the
+  isolate freezes after the first commit (see [Streaming](/docs/guides/streaming)).

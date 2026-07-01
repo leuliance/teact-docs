@@ -3,11 +3,10 @@ title: "@teactjs/testing"
 description: MockAdapter to simulate updates and assert sends, and renderBot to inspect component output — no Telegram network calls.
 ---
 
-Test Teact bots without hitting Telegram. `MockAdapter` records sent messages and lets you simulate
-incoming updates; `renderBot` renders a component in isolation and returns its serialized output tree.
-Works with Vitest, Jest, or `bun test`.
 
-## Install
+Test Teact bots without hitting Telegram. `MockAdapter` records sent messages and lets you simulate
+incoming updates; `renderBot` renders a component in isolation and returns its serialized output
+tree. Works with Vitest, Jest, or `bun test`.
 
 ```bash
 bun add -D @teactjs/testing
@@ -24,6 +23,8 @@ bun add -D @teactjs/testing
 
 ## MockAdapter
 
+Pass it to `createBot` as the adapter, then drive updates and assert on `sent` / `edited`:
+
 ```ts
 import { MockAdapter } from "@teactjs/testing";
 import { createBot } from "@teactjs/core";
@@ -32,9 +33,8 @@ const adapter = new MockAdapter();
 const bot = createBot({ component: App, adapter, token: "test" });
 await bot.start();
 
-// simulate(chatId, userId, text) — positional args
-adapter.simulateMessage("1", "1", "/start");
-adapter.simulateCallback("1", "1", "ok");
+await adapter.simulateMessage("1", "1", "/start");   // (chatId, userId, text)
+await adapter.simulateCallback("1", "1", "ok");       // (chatId, userId, data, messageId?)
 
 adapter.getLastSent(); // most recent SentMessage | undefined
 adapter.sent;          // SentMessage[]
@@ -43,6 +43,9 @@ adapter.reset();
 ```
 
 ## renderBot
+
+`renderBot(Component, initialCtx?)` renders a `{ ctx }` component and returns the serialized tree
+plus helpers. `rerender` accepts a `Partial<BotContext>`:
 
 ```tsx
 import { renderBot } from "@teactjs/testing";

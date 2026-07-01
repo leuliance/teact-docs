@@ -3,45 +3,69 @@ title: Commands
 description: Register Telegram bot commands with createBot, map them to routes or handlers, and read them in components with useCommand.
 ---
 
+
+There are two ways to register commands: standalone via `createBot`, or
+[co-located on routes](/docs/guides/router#co-located-commands) via
+`createRouter`. Both end up in Telegram's command menu.
+
 ## Registering commands
 
 Pass a `commands` object to `createBot`:
 
 ```ts
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+
 const bot = createBot({
   component: App,
   adapter: new TelegramAdapter(),
   token: process.env.TELEGRAM_BOT_TOKEN!,
   commands: {
     start: { description: "Start the bot", route: "/" },
-    help: {
-      description: "Show help",
-      handler: (ctx) => ctx.reply("Help text"),
+    help: { description: "Show help", handler: "Use /start to begin." },
+    echo: {
+      description: "Echo args",
+      handler: async (ctx) => ctx.reply(ctx.args.join(" ")),
     },
     settings: { description: "Settings", route: "/settings" },
   },
 });
 ```
 
-- **`route`** — navigates the Teact router to that path (when using a router).
-- **`handler`** — imperative reply (grammY-style) without routing.
+Each `CommandDef` has a `description` plus one of:
+
+- **`route`** — navigates the Teact router to that path (requires a router).
+- **`handler`** — a static reply string, or an async function
+  `(ctx) => ...` for an imperative reply.
+- **`deepLink`** — resolve `/start <payload>` arguments into a route path.
 
 The adapter registers these with Telegram so they appear in the command menu.
 
 ## Deep links
 
-Scaffold templates (e.g. Showcase) often ship a `commands.ts` that wires `/start` payloads and menu entries to routes. Point users to `https://t.me/YourBot?start=...` for deep entry.
+Telegram deep links look like `https://t.me/YourBot?start=<payload>`. Handle the
+payload with a `deepLink` resolver (on a command or a
+[co-located route command](/docs/guides/router#co-located-commands)):
+
+```ts
+commands: {
+  start: {
+    description: "Start",
+    deepLink: (args) => (args[0] ? `/pokemon/${args[0]}` : "/"),
+  },
+}
+```
 
 ## useCommand
 
-Inside components, read the parsed command and arguments:
+Inside components, read the parsed command and its arguments:
 
 ```tsx
 import { useCommand } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
 
 function Screen() {
   const cmd = useCommand();
-  // cmd.command, cmd.args, etc. (shape from runtime)
   return <Message text={cmd?.command ?? "menu"} />;
 }
 ```
@@ -50,4 +74,6 @@ Use this to branch UI when the same route handles multiple command aliases.
 
 ## Buttons that carry routes
 
-Inline buttons can target routes (see [Components](/docs/guides/components) — `Button` with `onClick` navigating or callback data mapped to routes depending on your setup).
+Inline buttons can navigate directly. Prefer the declarative form
+`<Button route="/x" params={{ id }} />`, or use `onClick={() => navigate(...)}`.
+See [Components](/docs/guides/components).

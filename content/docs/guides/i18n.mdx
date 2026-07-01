@@ -3,6 +3,11 @@ title: Internationalization (i18n)
 description: createI18n and useLocale for translated copy and per-user language switching.
 ---
 
+
+Teact ships a small i18n layer in **`@teactjs/core`**: define your translation
+resources once with `createI18n`, then read and switch the active locale from any
+component with `useLocale`.
+
 ## Setup
 
 ```ts
@@ -17,21 +22,35 @@ export const i18n = createI18n({
 });
 ```
 
-Wire `i18n` through your bot `providers` or plugin pattern as your template does.
+Wire `i18n` into your bot through `providers` (or the plugin pattern your
+template uses) so every render can reach it.
 
 ## useLocale
 
+`useLocale()` returns `{ t, locale, setLocale }`:
+
+- `t(key, vars?)` — look up `key` in the active locale and interpolate `{{vars}}`.
+- `locale` — the current locale string.
+- `setLocale(next)` — switch the active locale (persisted per user via the session).
+
 ```tsx
 import { useLocale } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 
 function Greeting() {
   const { t, locale, setLocale } = useLocale();
   return (
-    <Message
-      text={t("greeting", { name: "World" })}
-    />
+    <Message text={t("greeting", { name: "World" })}>
+      <InlineKeyboard>
+        <Button
+          text={locale === "en" ? "አማርኛ" : "English"}
+          onClick={() => setLocale(locale === "en" ? "am" : "en")}
+        />
+      </InlineKeyboard>
+    </Message>
   );
 }
 ```
 
-Scaffolded **i18n** feature adds locale JSON files and often a `/language` route with `LanguagePage`.
+The scaffolded **i18n** feature adds locale JSON files and usually a `/language`
+route with a `LanguagePage` for picking a language.

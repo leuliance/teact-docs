@@ -9,3 +9,31 @@ html {
 html:has(body[data-scroll-locked]) {
   scrollbar-gutter: auto;
 }
+
+/* Flashing dot used by the alpha badge on the docs home page. */
+@keyframes teact-alpha-flash {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+
+.teact-alpha-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: #b45309; /* amber-700 */
+  animation: teact-alpha-flash 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teact-alpha-dot {
+    animation: none;
+  }
+}

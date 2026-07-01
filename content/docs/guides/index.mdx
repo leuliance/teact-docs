@@ -3,6 +3,18 @@ title: Guides overview
 description: Feature guides for routing, commands, conversations, hooks, UI, and Telegram-specific behavior.
 ---
 
+
+Teact is React for Telegram bots. Everything except the UI components lives in
+**`@teactjs/core`**; components come from **`@teactjs/ui`**; the grammY-driven
+Telegram runtime (adapter, conversations, streaming) comes from
+**`@teactjs/telegram`**.
+
+<Callout type="info">
+  The old `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer` packages
+  were folded into `@teactjs/core` in 0.2.0-alpha. Import engine + hooks from
+  `@teactjs/core` and components from `@teactjs/ui`.
+</Callout>
+
 Use the sidebar to jump to a topic. Suggested order for new bots:
 
 1. [Router](/docs/guides/router) — screens and navigation
@@ -10,4 +22,7 @@ Use the sidebar to jump to a topic. Suggested order for new bots:
 3. [Components](/docs/guides/components) — messages, keyboards, media
 4. [Hooks](/docs/guides/hooks) — context, session, navigate, commands
 
-Then add [Conversations](/docs/guides/conversations), [Forms](/docs/guides/forms), [Storage](/docs/guides/storage), or [Auth](/docs/guides/auth) as needed.
+Then add [Conversations](/docs/guides/conversations),
+[Forms](/docs/guides/forms), [Streaming](/docs/guides/streaming),
+[Events](/docs/guides/events), [Storage](/docs/guides/storage), or
+[Auth](/docs/guides/auth) as needed.
