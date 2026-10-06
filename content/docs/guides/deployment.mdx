@@ -1,12 +1,33 @@
 ---
 title: Deployment
-description: Build a Teact bot for production and run it with polling or webhooks on a VPS or process manager.
+description: Run a Teact bot in production — long-running polling on a VPS, or serverless/edge (Cloudflare Workers, Vercel, Deno, Bun) via bot.fetch().
 ---
 
-In development you run `teact dev` (HMR). For production you compile once with `teact build` and run
-the bundled output with Bun.
+A Teact bot runs one of two ways in production:
 
-## Build
+- **Long-running** — `bot.start()` polls Telegram (or serves a webhook) from a process that stays
+  up: a VPS, a container, PM2/systemd.
+- **Serverless / edge** — Telegram pushes each update to a URL, and `bot.fetch(request)` handles it
+  as a web-standard `Request → Response`. Runs on Cloudflare Workers, Vercel/Deno Edge, Netlify,
+  `Bun.serve`, or Node.
+
+The same `src/index.tsx` supports both, as long as it **exports the bot** and only starts polling
+when run directly:
+
+```tsx title="src/index.tsx"
+export const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+});
+
+if (import.meta.main) bot.start();
+```
+
+Projects scaffolded with `bun create teact` already follow this shape.
+
+## Long-running (polling or webhook server)
+
+### Build
 
 Scaffolded projects ship these scripts in `package.json`:
 
@@ -27,41 +48,35 @@ bun run build
 ```
 
 `teact build` finds your entry (`src/index.tsx` by default) and bundles it. Pass `--entry` to
-override, or `--minify` / `--sourcemap` to tune output.
+override, or `--no-minify` / `--no-sourcemap` to tune output.
 
-## Run
-
-Start the compiled bot:
+### Run
 
 ```bash
 bun run start
-# equivalently: bun run dist/index.js
+# equivalently: bun run dist/index.js  or  teact start
 ```
 
-## Environment variables
+### Environment variables
 
-Set these on the server (export them, or use a `.env` loaded by your host):
+Set these on the server (export them, or put them in a root `.env`, which is auto-loaded on
+Bun/Node):
 
 - `TELEGRAM_BOT_TOKEN` — required.
+- `WEBHOOK_SECRET` — recommended in webhook mode.
 - `PAYMENT_PROVIDER_TOKEN` — only if you use [Payments](/docs/guides/payments).
 
-`new TelegramAdapter()` reads `TELEGRAM_BOT_TOKEN` automatically, so you usually don't pass `token`
-explicitly in production.
-
-## Polling vs webhook
+### Polling vs webhook server
 
 - **Polling** (default) works anywhere with outbound internet — no public URL needed. Run exactly
   **one** instance per token, or updates will be split between processes.
-- **Webhook** is better for serverless and horizontal scaling: Telegram pushes updates to a public
-  HTTPS URL. Configure `mode: "webhook"` with a `domain`, `port`, `path`, and `secretToken`.
+- **Webhook server** — set `mode: "webhook"` with a `domain`, `port`, `path`, and `secretToken` and
+  Teact starts an HTTP server for Telegram to push to. See the
+  [Telegram adapter guide](/docs/guides/telegram-adapter#webhook-server).
 
-See the [Telegram adapter guide](/docs/guides/telegram-adapter) for the full polling vs webhook
-setup.
+### Process manager
 
-## VPS / process manager
-
-On a long-running server, keep the bot alive with a process manager so it restarts on crash or
-reboot. For example with PM2:
+Keep the bot alive with a process manager so it restarts on crash or reboot. For example with PM2:
 
 ```bash
 bun run build
@@ -71,3 +86,173 @@ pm2 save
 
 systemd, Docker, or any supervisor works the same way — build first, then run
 `bun run dist/index.js` as the service command with the env vars set.
+
+## Serverless / edge with `bot.fetch()`
+
+`bot.fetch(request, { token, secretToken })` is a universal webhook handler:
+
+- It initializes the bot **lazily, once per isolate** — no polling, no server, no
+  `setMyCommands` call on every request.
+- The token is resolved **per request**, matching the Cloudflare `env` pattern. It falls back to
+  `createBot({ token })` or `TELEGRAM_BOT_TOKEN`.
+- When `secretToken` is set, requests without a matching `X-Telegram-Bot-Api-Secret-Token` header
+  are rejected.
+- The returned `Response` resolves **only after** the reply has been sent to Telegram and any
+  session write has finished. That matters on the edge: once the `Response` resolves the isolate
+  can freeze, and anything still pending is dropped.
+
+### Cloudflare Workers
+
+`teact deploy` scaffolds everything:
+
+```bash
+teact deploy cloudflare
+```
+
+It creates two files (existing ones are left untouched):
+
+```ts title="src/worker.ts"
+// src/index.tsx exports the bot and only calls bot.start() when run directly,
+// so importing it here does NOT start polling.
+import { bot } from "./index";
+
+export interface Env {
+  TELEGRAM_BOT_TOKEN: string;
+  WEBHOOK_SECRET?: string;
+}
+
+export default {
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+};
+```
+
+```jsonc title="wrangler.jsonc"
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-bot",
+  "main": "src/worker.ts",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"]
+}
+```
+
+Then set secrets, deploy, and point Telegram at the worker:
+
+```bash
+bunx wrangler secret put TELEGRAM_BOT_TOKEN
+bunx wrangler secret put WEBHOOK_SECRET        # any random string
+bunx wrangler deploy                           # or: teact deploy --run
+teact webhook set https://my-bot.<account>.workers.dev --secret <same WEBHOOK_SECRET>
+```
+
+`teact webhook set` reads `TELEGRAM_BOT_TOKEN`, and `WEBHOOK_SECRET` if you leave out `--secret`,
+from the environment or your project's `.env`. Check delivery with `teact webhook info`, which shows
+the URL, the pending update count, and Telegram's last delivery error.
+
+<Callout type="info">
+  If `teact deploy` warns that your entry doesn't `export const bot`, add the export and the
+  `if (import.meta.main)` guard shown above. Without the export the worker can't import the bot;
+  without the guard, importing it would try to start polling.
+</Callout>
+
+### Other platforms
+
+Anything that speaks `Request`/`Response` works. Export a handler that calls `bot.fetch`:
+
+```ts title="Vercel Edge — api/bot.ts"
+import { bot } from "../src/index";
+
+export const config = { runtime: "edge" };
+
+export default (request: Request) =>
+  bot.fetch(request, {
+    token: process.env.TELEGRAM_BOT_TOKEN,
+    secretToken: process.env.WEBHOOK_SECRET,
+  });
+```
+
+```ts title="Bun.serve"
+import { bot } from "./src/index";
+
+Bun.serve({ port: 3000, fetch: (req) => bot.fetch(req) });
+```
+
+Then run `teact webhook set <your-public-url>` once.
+
+### Edge checklist
+
+Edge runtimes have no filesystem and freeze between requests, so a few things work differently than
+with `bun dev`:
+
+- **`teact.config.ts` is not loaded.** Pass plugins and the session store straight to `createBot`:
+
+  ```tsx
+  export const bot = createBot({
+    router,
+    adapter: new TelegramAdapter(),
+    plugins: [storagePlugin({ driver: kvDriver })], // a custom StorageDriver
+    session: { store: kvSessionStore },
+  });
+  ```
+
+- **Use a durable session store.** The default in-memory store is per isolate, so sessions don't
+  persist between requests. Teact logs a one-time warning when `bot.fetch()` runs with it.
+- **Use a durable storage driver.** The `'file'` driver warns and falls back to memory when there is
+  no filesystem. Write a `StorageDriver` backed by KV, D1, or Redis; see [Storage](/docs/guides/storage).
+- **No work after the response.** [Streaming](/docs/guides/streaming), imperative
+  [conversations](/docs/guides/conversations), and timers that fire after the reply need a
+  long-running process.
+- **`.env` isn't read.** Configure secrets on the platform and pass the token through
+  `bot.fetch(req, { token })`.
+
+### Example: Cloudflare KV session store
+
+A `SessionStore` is three async methods. This one uses a KV namespace bound as `SESSIONS` in
+`wrangler.jsonc`:
+
+```ts title="src/kv-session-store.ts"
+import { env } from "cloudflare:workers";
+import type { SessionData, SessionStore } from "@teactjs/core";
+
+export const kvSessionStore: SessionStore = {
+  async get(key) {
+    return (await env.SESSIONS.get(`session:${key}`, "json")) as SessionData | null;
+  },
+  async set(key, data) {
+    await env.SESSIONS.put(`session:${key}`, JSON.stringify(data));
+  },
+  async delete(key) {
+    await env.SESSIONS.delete(`session:${key}`);
+  },
+};
+```
+
+```jsonc title="wrangler.jsonc"
+{
+  // …
+  "kv_namespaces": [{ "binding": "SESSIONS", "id": "<namespace-id>" }]
+}
+```
+
+`bot.fetch()` awaits the `set()` before it returns, so the write completes even on the edge.
+
+### Switching back to polling
+
+A bot can't poll while a webhook is set. To develop locally again:
+
+```bash
+teact webhook delete     # add --drop to discard queued updates
+bun dev
+```
+
+## Do / Don't
+
+- **Do** `export const bot` and guard `bot.start()` with `if (import.meta.main)` so one entry works
+  for both modes.
+- **Do** set a `WEBHOOK_SECRET` and pass it as `secretToken`, so only Telegram can call your
+  endpoint.
+- **Do** pass `plugins` and `session.store` to `createBot()` for edge deploys.
+- **Don't** run more than one polling instance per token.
+- **Don't** rely on the in-memory session store, the `'file'` storage driver, or streaming on the
+  edge.

@@ -36,8 +36,40 @@ bun add -D @teactjs/cli
 teact dev              # develop with hot reload
 teact typecheck        # verify types
 teact build            # produce dist/
-teact webhook set https://example.com/api/bot --secret $SECRET
 teact deploy cloudflare --run
+teact webhook set https://my-bot.<account>.workers.dev
 ```
 
-See the [Deployment guide](/docs/guides/deployment) for platform-specific setup.
+## `teact deploy [target]`
+
+Scaffolds a serverless deployment. The only target today is `cloudflare` (the default). It:
+
+1. Checks that your entry (`src/index.ts(x)`) does `export const bot = createBot(...)`, and warns if
+   it doesn't. The generated worker imports the bot from there.
+2. Creates `src/worker.ts`, a fetch handler that calls
+   `bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET })`.
+3. Creates `wrangler.jsonc` (`main: "src/worker.ts"`, `nodejs_compat`), named after your
+   `package.json`.
+4. Prints the next steps: set secrets, deploy, register the webhook.
+
+Existing `src/worker.ts` / `wrangler.jsonc` files are never overwritten. With `--run` it also runs
+`bunx wrangler deploy`.
+
+For other platforms (Vercel, Deno, Bun, Node), export your own handler that calls `bot.fetch(request)`.
+
+## `teact webhook <action> [url]`
+
+Manages the bot's Telegram webhook through the Bot API.
+
+| Action | What it does |
+| ------ | ------------ |
+| `set <url>` | Calls `setWebhook`. Adds `secret_token` from `--secret`, or from `WEBHOOK_SECRET` when the flag is omitted. |
+| `info` | Shows the current URL (or "polling"), the pending update count, and Telegram's last delivery error. |
+| `delete` | Removes the webhook so the bot can poll again. |
+
+`--drop` discards pending updates on `set` and `delete`.
+
+`TELEGRAM_BOT_TOKEN` and `WEBHOOK_SECRET` are read from the environment first, then from the project's
+`.env`. The secret must match the one your handler passes to `bot.fetch()`.
+
+See the [Deployment guide](/docs/guides/deployment) for the full serverless walkthrough.
