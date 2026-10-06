@@ -33,7 +33,9 @@ function Counter() {
 - **Messages & keyboards** — inline and reply keyboards with `<Button>`, `<InlineKeyboard>`, `<ReplyKeyboard>`.
 - **Routing** — `createRouter` with params, `beforeLoad` guards, and navigation modes (`push`, `replace`, `stack`, `dismiss`).
 - **Flows** — multi-step **conversations** and schema-driven **forms**.
-- **Platform features** — **streaming** text, **i18n**, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** via `useOn`.
+- **Platform features** — **streaming** text, **i18n** with automatic language detection, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** via `useOn`.
+- **Databases** — durable storage and sessions on Redis, Postgres, SQLite, MongoDB, or Cloudflare D1/KV, on long-running servers and the edge.
+- **Production plugins** — rate limiting, logging, maintenance mode, error reporting, analytics, feature flags, and broadcasts.
 - **Deploy anywhere** — long-running polling _or_ serverless via a web-standard `bot.fetch(request)` handler.
 
 ## Packages at a glance
@@ -44,9 +46,12 @@ function Counter() {
 | `@teactjs/ui` | Components — `Message`, keyboards, media, polls, formatting |
 | `@teactjs/telegram` | grammY-based adapter (polling & webhook) + `conversationsPlugin` / `streamPlugin` |
 | `@teactjs/plugin-sdk` | `definePlugin` — author your own plugins |
-| `@teactjs/storage` | Persistent storage plugin (file/memory drivers; bring your own for KV/Redis) |
+| `@teactjs/storage` | Persistent storage plugin — memory/file drivers, async database drivers, `createSessionStore` |
+| `@teactjs/redis`, `@teactjs/postgres`, `@teactjs/sqlite`, `@teactjs/mongodb`, `@teactjs/cloudflare` | Database drivers, session stores and client plugins |
+| `@teactjs/i18n` | `i18nPlugin`, UI strings in 19 languages, `LanguagePicker`, `useFormat` |
+| `@teactjs/plugins` | `rateLimit`, `logger`, `maintenance`, `errorReporter`, `analytics`, `featureFlags`, … |
 | `@teactjs/testing` | `MockAdapter`, `renderBot` |
-| `@teactjs/cli` / `create-teact` | Dev server, build, deploy, and scaffolding |
+| `@teactjs/cli` / `create-teact` | Dev, build, `teact add`, deploy, doctor, and scaffolding |
 
 <Callout type="info">
   The 0.2.0 rewrite folded the old `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer`

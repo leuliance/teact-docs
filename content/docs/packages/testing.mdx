@@ -19,6 +19,7 @@ bun add -D @teactjs/testing
 | `MockAdapter` | class | In-memory adapter that records sends and simulates updates. |
 | `renderBot` | function | Render a component to an output tree with assertion helpers. |
 | `SentMessage`, `EditedMessage` | types | Recorded message shapes. |
+| `SimulateOptions` | type | `{ languageCode? }` — extra fields for `simulateMessage` / `simulateCallback`. |
 | `RenderResult` | type | Return type of `renderBot`. |
 
 ## MockAdapter
@@ -36,11 +37,18 @@ await bot.start();
 await adapter.simulateMessage("1", "1", "/start");   // (chatId, userId, text)
 await adapter.simulateCallback("1", "1", "ok");       // (chatId, userId, data, messageId?)
 
+// optional last argument: the sender's Telegram language_code
+await adapter.simulateMessage("1", "1", "/start", { languageCode: "pt-br" });
+await adapter.simulateCallback("1", "1", "ok", undefined, { languageCode: "pt-br" });
+
 adapter.getLastSent(); // most recent SentMessage | undefined
 adapter.sent;          // SentMessage[]
 adapter.edited;        // EditedMessage[]
 adapter.reset();
 ```
+
+`languageCode` is set on `ctx.user.languageCode`, so locale detection in
+[i18n](/docs/guides/i18n) picks it up.
 
 ## renderBot
 

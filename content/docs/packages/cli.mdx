@@ -1,11 +1,12 @@
 ---
 title: "@teactjs/cli"
-description: The teact CLI — dev, build, start, deploy, webhook, generate, doctor, routes, and typecheck.
+description: The teact CLI — create, dev, build, start, add, deploy, webhook, generate, doctor, routes, info and typecheck.
 ---
 
 
-The `teact` command drives a project through development, building, deployment, and diagnostics.
-It is installed as a dev dependency by `create-teact`, so most projects already have it.
+The `teact` command drives a project through scaffolding, development, building, deployment, and
+diagnostics. It is installed as a dev dependency by `create-teact`, so most projects already have it.
+Commands are loaded lazily, so `teact --help` and light commands start instantly.
 
 ```bash
 bun add -D @teactjs/cli
@@ -15,29 +16,154 @@ bun add -D @teactjs/cli
 
 | Command | Purpose |
 | ------- | ------- |
-| `teact dev` | Development server with hot reload (`-e, --entry <file>`) |
-| `teact build` | Build for production to `dist/` (`-e`, `--no-minify`, `--no-sourcemap`) |
+| `teact create <name>` | Scaffold a project (`-t`, `-f`, `--db`, `--pm`, `--no-install`) |
+| `teact dev` | Run the bot and reload on change — `bun --watch` by default (`-e`, `--hot`, `--clear`, `--vite`) |
+| `teact build` | Bundle to `dist/index.js` with `Bun.build` (`-e`, `--target`, `--standalone`, `--vite`, `--no-minify`, `--no-sourcemap`) |
 | `teact start` | Run the production build (`dist/index.js`) — run `teact build` first |
+| `teact add [names...]` | Install integrations and wire them into `createBot` (`--client`, `--dry-run`, `--no-install`, `--no-wire`) |
 | `teact deploy [target]` | Scaffold & deploy to a serverless platform (default `cloudflare`; `--run` to execute the platform command) |
 | `teact webhook <action> [url]` | Manage the Telegram webhook: `set <url>` / `delete` / `info` (`--secret`, `--drop`) |
-| `teact generate <type> <name>` | Generate a `component`, `hook`, or `plugin` |
-| `teact doctor` | Check your environment and project setup |
-| `teact routes` | List registered routes in the project |
+| `teact generate <type> <name>` | Generate a `component`, `hook`, or `plugin` (alias `teact g`) |
+| `teact doctor` | Check environment, project, bot token and dependencies (`--offline`) |
+| `teact routes` | List routes declared with `createRouter()` (`--json`) |
+| `teact info` | Print project and environment info |
 | `teact typecheck` | Type-check with `tsc --noEmit` |
-
-<Callout type="info">
-`teact create <name>` also exists for scaffolding, but new projects usually start with
-[`bun create teact`](/docs/packages/create-teact).
-</Callout>
 
 ## Typical workflow
 
 ```bash
-teact dev              # develop with hot reload
+teact dev              # develop with reload on change
 teact typecheck        # verify types
-teact build            # produce dist/
+teact build            # produce dist/index.js
 teact deploy cloudflare --run
 teact webhook set https://my-bot.<account>.workers.dev
+```
+
+## `teact create <name>`
+
+Most projects start with [`bun create teact`](/docs/packages/create-teact), which runs the same
+generator interactively. `teact create` takes the choices as flags:
+
+| Flag | Description |
+| ---- | ----------- |
+| `-t, --template <name>` | `starter`, `showcase`, `counter`, `empty` (aliases: `router` → `starter`, `full` → `showcase`) |
+| `-f, --features <list>` | Comma-separated: `storage`, `conversations`, `streaming`, `auth`, `payments` (i18n is always included) |
+| `--db <driver>` | Storage backend (implies `storage`): `file` (default), `memory`, `sqlite`, `redis`, `postgres` |
+| `--pm <manager>` | `bun`, `npm` or `pnpm` |
+| `--no-install` | Skip dependency installation |
+
+```bash
+teact create my-bot -t starter -f storage,auth --db sqlite
+```
+
+`--db sqlite` wires `SqliteDriver` from [`@teactjs/sqlite`](/docs/packages/sqlite); `redis` wires
+[`@teactjs/redis`](/docs/packages/redis) with ioredis and adds `REDIS_URL` to `.env`; `postgres` wires
+[`@teactjs/postgres`](/docs/packages/postgres) with postgres.js and adds `DATABASE_URL`. In a terminal,
+omitted flags are prompted for, including the storage backend when Storage is picked.
+
+## `teact dev`
+
+Runs your entry and reloads it when files change. Under Bun this is `bun --watch`: the process
+restarts on each change, so timers, sockets and the previous poller never leak, and `.env` is loaded
+by Bun.
+
+```bash
+teact dev
+teact dev --hot --clear
+teact dev --vite -e src/bot.tsx
+```
+
+| Flag | Description |
+| ---- | ----------- |
+| `-e, --entry <file>` | Entry file (default: auto-detected, `src/index.tsx`) |
+| `--hot` | Reload in-process with `bun --hot` — faster, but module side effects such as intervals or signal listeners survive reloads |
+| `--clear` | Clear the terminal on every reload |
+| `--vite` | Use the vite-node pipeline |
+
+Projects with a `vite.config.*` file use vite-node automatically, as does running outside Bun.
+
+## `teact build`
+
+Bundles the bot into `dist/index.js` with `Bun.build`. `@teactjs/*` packages are bundled; other
+dependencies stay external and load from `node_modules` (so there is a single React instance).
+
+```bash
+teact build
+teact build --target node --no-minify --no-sourcemap
+teact build --standalone   # also bundle dependencies (grammY and DB clients stay external)
+```
+
+| Flag | Description |
+| ---- | ----------- |
+| `-e, --entry <file>` | Entry file |
+| `--target <bun\|node>` | Runtime to target (default `bun`) |
+| `--standalone` | Bundle dependencies too |
+| `--vite` | Build with Vite (automatic when a `vite.config.*` exists) |
+| `--no-minify` | Disable minification |
+| `--no-sourcemap` | Disable source maps |
+
+Run the result with `teact start`.
+
+## `teact add [names...]`
+
+Installs an integration with your package manager (detected from the lockfile) and wires it into
+`createBot({ plugins: [...] })` in your entry. If the file has an unexpected shape, nothing is
+edited and the snippet is printed instead. Run `teact add` with no arguments to list everything.
+
+```bash
+teact add redis --client ioredis      # ioredis | redis | upstash | bun
+teact add postgres --client neon      # pg | postgres | neon | pglite
+teact add sqlite rate-limit logger
+teact add mongodb --dry-run
+```
+
+| Name | Installs | `--client` |
+| ---- | -------- | ---------- |
+| `storage` | `@teactjs/storage` (file driver) | — |
+| `redis` | [`@teactjs/redis`](/docs/packages/redis) | `ioredis` (default), `redis`, `upstash`, `bun` |
+| `postgres` (`pg`, `neon`, `supabase`) | [`@teactjs/postgres`](/docs/packages/postgres) | `pg` (default), `postgres`, `neon`, `pglite` |
+| `sqlite` | [`@teactjs/sqlite`](/docs/packages/sqlite) | `bun` (default), `better-sqlite3` |
+| `mongodb` (`mongo`) | [`@teactjs/mongodb`](/docs/packages/mongodb) | — |
+| `cloudflare` (`cf`, `kv`, `d1`) | [`@teactjs/cloudflare`](/docs/packages/cloudflare) — prints the snippet | `kv` (default), `d1` |
+| `i18n` | [`@teactjs/i18n`](/docs/packages/i18n) — prints the snippet | — |
+| `plugins` | [`@teactjs/plugins`](/docs/packages/plugins) | — |
+| `rate-limit`, `logger`, `maintenance`, `chat-filter`, `ignore-old`, `error-reporter`, `analytics`, `feature-flags` | one plugin from `@teactjs/plugins` | — |
+| `broadcast` | `@teactjs/plugins` — prints a `createBroadcaster` snippet | — |
+
+| Flag | Description |
+| ---- | ----------- |
+| `--client <client>` | Client library variant |
+| `--dry-run` | Print what would happen without installing or editing files |
+| `--no-install` | Skip package installation |
+| `--no-wire` | Don't edit source files; just print the snippet |
+
+## `teact doctor`
+
+Runs all checks in parallel and prints fixes for anything that fails:
+
+- Bun version and project files (entry, `teact.config.ts`, TypeScript, `.env`).
+- `TELEGRAM_BOT_TOKEN` format and validity (`getMe`, 3s timeout).
+- Webhook status — warns when a webhook is set, because polling (`teact dev`) won't receive updates.
+- `WEBHOOK_SECRET` when a webhook/edge deploy is detected.
+- Duplicate React copies (the cause of "Invalid hook call"), mismatched `@teactjs/*` versions, and
+  database packages whose client library is missing.
+
+```bash
+teact doctor
+teact doctor --offline   # skip network checks (token validity, webhook status)
+```
+
+Colors honour `NO_COLOR`.
+
+## `teact routes`
+
+Lists the routes declared with `createRouter()` under `src/`, with their component, co-located
+command and guard. It is static analysis — nothing is executed. `--json` prints machine-readable
+output.
+
+```bash
+teact routes
+teact routes --json
 ```
 
 ## `teact deploy [target]`

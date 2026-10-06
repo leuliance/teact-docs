@@ -1,0 +1,154 @@
+---
+title: "@teactjs/redis"
+description: Redis storage driver, durable session store and plugin — works with ioredis, node-redis, Bun's built-in client and Upstash (edge).
+---
+
+Redis storage for Teact bots: a `RedisDriver` for `storagePlugin`, a durable session store, and a
+small plugin that exposes your client to components. It supports the popular clients without making
+any of them a hard dependency:
+
+| Client | Runtime | Detection |
+| ------ | ------- | --------- |
+| [`ioredis`](https://github.com/redis/ioredis) | Node / Bun | automatic, or `fromIoredis(client)` |
+| [`redis`](https://github.com/redis/node-redis) (node-redis v4/v5) | Node / Bun | automatic, or `fromNodeRedis(client)` |
+| Bun's built-in `RedisClient` / `Bun.redis` | Bun | automatic, or `fromBunRedis(client)` |
+| [`@upstash/redis`](https://github.com/upstash/redis-js) (HTTP) | Cloudflare Workers, Vercel Edge, Deno, Node | automatic, or `fromUpstash(client)` |
+
+```bash
+bun add @teactjs/redis @teactjs/storage
+# plus ONE client (skip it on Bun if you use Bun's built-in client):
+bun add ioredis          # or: redis, @upstash/redis
+```
+
+Or let the CLI install and wire it: `teact add redis --client ioredis` (`ioredis` | `redis` |
+`upstash` | `bun`).
+
+## Exports
+
+| Export | Kind | Description |
+| ------ | ---- | ----------- |
+| `RedisDriver` | class | `AsyncStorageDriver` for `storagePlugin`. Options: `client`, `clientKind?`, `namespace?`, `closeClient?` (default `true`). |
+| `redisSessionStore` | function | `redisSessionStore({ client, namespace?, prefix?, ttl? })` → `SessionStore`. |
+| `redisPlugin` | plugin | `redisPlugin({ client, closeOnStop? })` — registers the client as the `'redis'` service. |
+| `useRedis` | hook | `useRedis<C>()` → the client registered by `redisPlugin`. |
+| `fromIoredis`, `fromNodeRedis`, `fromBunRedis`, `fromUpstash` | functions | Explicit client adapters when auto-detection guesses wrong. |
+| `toRedisCommands`, `detectRedisClient`, `markNormalized` | functions | Lower-level adapter helpers. |
+| `escapeGlob`, `REDIS_SERVICE` | utils | Glob escaping for `SCAN MATCH`; the service key (`'redis'`). |
+| `RedisCommands`, `RedisDriverOptions`, `RedisSessionStoreOptions`, `RedisPluginOptions`, `RedisClientKind` | types | Interfaces for custom clients and options. |
+
+## Storage driver
+
+```ts
+import { createBot } from "@teactjs/core";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver } from "@teactjs/redis";
+import Redis from "ioredis";
+
+const driver = new RedisDriver({
+  client: new Redis(process.env.REDIS_URL!),
+  namespace: "mybot:", // optional: prefix every key so several bots can share one DB
+});
+
+createBot({ plugins: [storagePlugin({ driver })] /* ... */ });
+```
+
+Components keep using `useStorage` as usual. Before each update the storage plugin loads the
+current chat's keys in one go (one `SCAN` pass plus one `MGET`), and every write is awaited before
+the update finishes. See [Databases](/docs/guides/databases) for how that works.
+
+### Each client
+
+```ts
+// node-redis v4+ (connect before the first update)
+import { createClient } from "redis";
+const client = await createClient({ url: process.env.REDIS_URL }).connect();
+new RedisDriver({ client });
+
+// Bun's built-in client
+import { RedisClient, redis } from "bun";
+new RedisDriver({ client: redis }); // uses REDIS_URL
+new RedisDriver({ client: new RedisClient("redis://localhost:6379") });
+
+// Upstash (HTTP, works on the edge)
+import { Redis } from "@upstash/redis";
+new RedisDriver({ client: Redis.fromEnv() });
+```
+
+If auto-detection guesses wrong (for example with a wrapped or proxied client), use the matching
+`from*` helper or pass `clientKind: 'ioredis' | 'node-redis' | 'bun' | 'upstash'`. Any other client
+works if you implement the small `RedisCommands` interface (`get`, `set(key, value, ttlMs?)`,
+`del(keys)`, `scan(pattern)`, plus optional `mget` and `close`) and mark it with `markNormalized()`.
+
+### How data is stored
+
+- **Values** are JSON strings, so any Redis tool can read them.
+- **TTL**: `driver.set(key, value, { ttl: ms })` becomes `SET key value PX ms`.
+- **Prefix queries** use `SCAN … MATCH <prefix>*` with glob characters escaped. The driver never
+  calls `KEYS`, so it never blocks the server.
+- **`clear()`** only deletes keys under the `namespace` and never runs `FLUSHDB`. Without a
+  namespace it deletes every key in the database.
+- **Upstash** JSON-parses values on read by default; the adapter accounts for that, so a stored
+  string `"42"` comes back as `"42"`, not `42`.
+
+### Closing
+
+`driver.close()` closes the client, and `storagePlugin` calls it when the bot stops. Pass
+`closeClient: false` if other code shares the client. Closing is idempotent across Teact, so a
+client shared with `redisPlugin` is only closed once.
+
+## Sessions
+
+```ts
+import { redisSessionStore } from "@teactjs/redis";
+
+createBot({
+  session: {
+    store: redisSessionStore({
+      client: redis,
+      namespace: "mybot:",
+      ttl: 30 * 24 * 3600_000, // optional: expire idle sessions after 30 days
+    }),
+  },
+});
+```
+
+This is equivalent to `createSessionStore(new RedisDriver({ client }), { prefix: "session:", ttl })`
+from [`@teactjs/storage`](/docs/packages/storage).
+
+## Plugin: use the client in components
+
+```tsx
+import { redisPlugin, useRedis, RedisDriver } from "@teactjs/redis";
+import type Redis from "ioredis";
+
+const redis = new Redis(process.env.REDIS_URL!);
+
+createBot({
+  plugins: [
+    redisPlugin({ client: redis }), // service 'redis', closed on stop
+    storagePlugin({ driver: new RedisDriver({ client: redis }) }),
+  ],
+});
+
+function Leaderboard() {
+  const redis = useRedis<Redis>();
+  // use it in handlers or effects, e.g. redis.zincrby("scores", 1, userId)
+}
+```
+
+`redisPlugin({ client, closeOnStop = true })` registers the client unchanged, so
+`useService("redis")` works too.
+
+## Serverless and edge
+
+- **Cloudflare Workers / Vercel Edge**: TCP clients don't work there; use `@upstash/redis` (HTTP).
+  Create the client once per isolate, at module scope.
+- Writes are awaited before `bot.fetch()` resolves, so nothing is lost when the isolate freezes.
+- **Long-running servers** (ioredis, node-redis, Bun): create a single client and reuse it.
+
+## Do / Don't
+
+- **Do** set a `namespace` when several bots or apps share one Redis database.
+- **Do** use `@upstash/redis` on edge runtimes.
+- **Don't** call `clear()` without a namespace on a shared database — it removes every key.
+- **Don't** create a new client per request on serverless.

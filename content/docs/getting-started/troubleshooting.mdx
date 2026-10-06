@@ -41,6 +41,13 @@ If the bot starts but never replies to messages:
   reliably. Stop the duplicate, or switch one to webhook mode. Guarding `bot.start()` behind
   `if (import.meta.main)` prevents accidental double-starts when the file is imported.
 
+- **Remove a leftover webhook.** A bot with a webhook set receives no updates by polling.
+  `teact doctor` warns about this; `teact webhook delete` removes it.
+
+- **A middleware may be halting updates.** If you use [`@teactjs/plugins`](/docs/packages/plugins)
+  (`chatFilter`, `maintenance`, `ignoreOld`, `rateLimit`) or your own `halt(ctx)`, check that the
+  update isn't being blocked — the `logger` plugin marks halted updates.
+
 - **Send `/start` or a message** to the bot in Telegram, and watch the dev console for incoming
   updates.
 
@@ -52,10 +59,15 @@ resolves**, and there is **no filesystem**. Rendering and the reply itself compl
 
 - **`teact.config.ts` is ignored** (loading it needs `fs`). Pass `plugins` and other options directly
   to `createBot({ plugins })`.
-- **In-memory session doesn't persist.** Provide a durable `SessionStore` (KV/Redis/DB) via
-  `createBot({ session: { store } })`.
-- **The `'file'` storage driver can't write** — it warns and degrades to memory. Use a custom
-  async-backed `StorageDriver`.
+- **In-memory session doesn't persist.** Pass a durable store via
+  `createBot({ session: { store } })` — e.g. `d1SessionStore` from
+  [`@teactjs/cloudflare`](/docs/packages/cloudflare), or the Upstash/Neon-backed stores from
+  [`@teactjs/redis`](/docs/packages/redis) and [`@teactjs/postgres`](/docs/packages/postgres).
+- **The `'file'` storage driver can't write** — it warns and degrades to memory. Pass an edge-capable
+  driver (`D1Driver`, `KVDriver`, `RedisDriver` with Upstash, `PostgresDriver` with Neon) to
+  `storagePlugin`. See [Databases](/docs/guides/databases).
+- **The language resets between messages.** The chosen locale is stored in the session, so it needs a
+  durable session store too.
 - **Post-commit side effects are dropped.** `useStream`, `useQuery`, and work in `useEffect`/`useOn`
   that runs after the first commit won't finish before the freeze. These are fine under long-running
   polling.

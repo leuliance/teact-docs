@@ -1,0 +1,229 @@
+---
+title: "@teactjs/plugins"
+description: Production plugins — rateLimit, logger, maintenance, chatFilter, ignoreOld, errorReporter, analytics, featureFlags and createBroadcaster.
+---
+
+Ready-made production plugins for Teact bots: flood protection, logging, maintenance mode, chat
+filters, stale-update dropping, error reporting, analytics, feature flags, and a rate-limited
+broadcaster.
+
+```bash
+bun add @teactjs/plugins
+# optional: only to share state across instances (Redis, Postgres, …)
+bun add @teactjs/storage
+```
+
+With the CLI, add and wire individual plugins: `teact add rate-limit logger error-reporter`.
+
+## Exports
+
+| Export | Kind | Description |
+| ------ | ---- | ----------- |
+| `rateLimit` | plugin | Throttle messages and button presses per user or chat. |
+| `logger` | plugin | One log entry per update (pretty or JSON). |
+| `maintenance` | plugin | Reply with a maintenance message, with an allow-list. |
+| `chatFilter` | plugin | Allow/deny chat types, users and chats. |
+| `ignoreOld` | plugin | Drop messages older than `maxAge` seconds. |
+| `errorReporter` | plugin | Report middleware, handler and render errors. |
+| `analytics`, `useTrack` | plugin / hook | Count updates, commands, users and custom events. |
+| `featureFlags`, `useFlag`, `rolloutBucket` | plugin / hook / util | Per-user flags with percentage rollouts. |
+| `createBroadcaster` | function | Send one message to many chats within Telegram's limits. |
+| `chatTypeOf`, `updateDateOf`, `textMessage` | utils | Helpers shared by the plugins. |
+| `DEFAULT_MAINTENANCE_MESSAGE`, `ANALYTICS_SERVICE`, `FEATURE_FLAGS_SERVICE` | constants | Defaults and service keys. |
+
+## Quick start
+
+```ts
+import { createBot } from "@teactjs/core";
+import {
+  logger, errorReporter, ignoreOld, maintenance, chatFilter, rateLimit, analytics, featureFlags,
+} from "@teactjs/plugins";
+
+createBot({
+  component: App,
+  plugins: [
+    logger({ format: "json" }), // first: sees and times everything
+    errorReporter({ report: (e) => Sentry.captureException(e) }),
+    ignoreOld({ maxAge: 120 }),
+    maintenance({ isEnabled: () => process.env.MAINTENANCE === "1", allow: [ADMIN_ID] }),
+    chatFilter({ allow: ["private"] }),
+    rateLimit({ window: 2000, limit: 3, onLimited: "⏳ Slow down!" }),
+    analytics(),
+    featureFlags({ flags: { newMenu: true }, rollout: { newMenu: 25 } }),
+  ],
+});
+```
+
+### How blocking works
+
+Plugin middleware runs in `plugins` order, before your components. A plugin that rejects an update
+calls [`halt(ctx)`](/docs/guides/middleware-plugins#halting-an-update) from `@teactjs/core`: nothing
+after it runs and the component is **not rendered**. Every update goes through these plugins,
+including commands with an inline `handler`, so a halted update never reaches the handler either.
+
+**Order matters**: put `logger` / `errorReporter` first, cheap filters (`ignoreOld`, `maintenance`,
+`chatFilter`, `rateLimit`) next, and `analytics` after the filters if you only want to count
+accepted updates.
+
+### Notifications (`Reply`)
+
+Options such as `onLimited`, `onBlocked` and `message` accept a `Reply`: a `string` (sent as a text
+message), an `OutputNode` (sent as-is), or `(ctx, reply) => …` for full control.
+
+### Shared state
+
+`rateLimit` and `analytics` keep counters in memory by default. Pass any `@teactjs/storage` driver
+(sync or async, e.g. a [`RedisDriver`](/docs/packages/redis)) as `storage` to share them across
+instances. Increments are serialized per process; across instances they are read-modify-write, so
+under heavy concurrency a few hits may be lost.
+
+## `rateLimit(options)`
+
+| Option | Default | Notes |
+| ------ | ------- | ----- |
+| `window` | `1000` | Window length in **ms** |
+| `limit` | `3` | Updates allowed per window |
+| `key` | `'user'` | `'user'`, `'chat'`, or `(ctx) => string \| null` (`null` = don't limit, e.g. admins) |
+| `strategy` | `'sliding'` | `'sliding'` or `'fixed'` (aligned buckets) |
+| `onLimited` | — | `Reply` sent at most once per window |
+| `storage` | memory | `AnyStorageDriver` for multi-instance limits |
+| `prefix` | `'teact:ratelimit:'` | Storage key prefix |
+
+```ts
+rateLimit({ window: 60_000, limit: 20, key: "chat", storage: new RedisDriver({ client: redis }) });
+```
+
+## `logger(options)`
+
+Logs one entry per update: type (`message` / `command` / `callback_query`), chat id and type, user,
+truncated text or callback data, duration, whether it was halted, and errors (logged and
+re-thrown).
+
+| Option | Default | Notes |
+| ------ | ------- | ----- |
+| `level` | `'info'` | `'debug'` also logs `update.start` |
+| `format` | `'pretty'` | or `'json'` (one object per line) |
+| `logger` | `console` | `(entry, line) => void` sink, or a console-like object |
+| `redact` | — | `['text', 'userId', …]` or `(entry) => entry` |
+| `maxTextLength` | `100` | |
+
+Render errors are handled by Teact's error boundary and don't reach middleware — use
+`errorReporter` for those.
+
+## `maintenance(options)`
+
+```ts
+maintenance({
+  isEnabled: async () => (await flags.get("maintenance")) === "on", // or `enabled: true`
+  allow: [ADMIN_ID],                                                // bypass
+  message: "🛠 Back in 10 minutes!",                                // null = silent
+});
+```
+
+## `chatFilter(options)`
+
+```ts
+chatFilter({
+  allow: ["private"],           // 'private' | 'group' | 'supergroup' | 'channel'
+  users: [ADMIN_ID],            // optional allow-list (user ids)
+  block: [SPAMMER_ID, -100123], // deny-list of user or chat ids, always wins
+  onBlocked: "Please DM me.",
+});
+```
+
+## `ignoreOld(options)`
+
+Drops messages older than `maxAge` **seconds** (default `300`), e.g. the backlog Telegram delivers
+after downtime. Callback queries and updates without a date always pass. `onIgnored(ctx, age)` is
+called per drop.
+
+## `errorReporter(options)`
+
+Reports errors from everything after it in the pipeline: later middleware, command handlers, button
+handlers and component **render errors**.
+
+```ts
+errorReporter({
+  report: (err, ctx, info) =>
+    Sentry.captureException(err, { tags: { source: info.source } }), // 'middleware' | 'render'
+  notifyUser: "😵 Something went wrong — we've been notified.",
+  include: ["user", "chat"], // + 'text' | 'callbackData' | 'raw' (PII!)
+});
+```
+
+Middleware errors are reported and swallowed (`notifyUser` is sent if set). A failing `report()` is
+logged and never breaks the update. Set `captureRenderErrors: false` to only watch middleware.
+
+## `analytics(options)` + `useTrack()`
+
+```ts
+const stats = analytics({
+  track: (e) => posthog.capture({ distinctId: e.userId, event: e.name, properties: e.properties }),
+  storage: new RedisDriver({ client: redis }), // optional
+});
+
+await stats.getStats();
+// { day, updates, updatesOnDay, uniqueUsers, commands: { start: 40 }, events: { purchase_clicked: 5 } }
+```
+
+```tsx
+function BuyButton() {
+  const track = useTrack();
+  return <Button text="Buy" onClick={() => track("purchase_clicked", { plan: "pro" })} />;
+}
+```
+
+Per-day counters expire after `retentionDays` (default 90). Call `track` from handlers or effects,
+not during render.
+
+## `featureFlags(options)` + `useFlag(name)`
+
+```tsx
+featureFlags({
+  flags: {
+    newMenu: true,
+    beta: (ctx) => BETA_TESTERS.includes(ctx.userId),
+    premium: async (ctx) => (await db.user(ctx.userId)).premium,
+  },
+  rollout: { newMenu: 25 }, // % of users, stable per user
+});
+
+function Menu() {
+  return useFlag("newMenu") ? <NewMenu /> : <OldMenu />;
+}
+```
+
+Flags are evaluated once per update in middleware (async allowed), then read synchronously with
+`useFlag`. Unknown flags are `false`; a throwing predicate counts as off. Outside components use
+`plugin.isEnabled(name, ctx)`.
+
+## `createBroadcaster(options)`
+
+```ts
+const broadcaster = createBroadcaster({
+  adapter,                         // the adapter passed to createBot
+  recipients: async function* () { // (async) iterable, e.g. streamed from your DB
+    for await (const u of db.users.find()) yield u.chatId;
+  },
+  rate: 25,                        // msgs/second (default 25)
+  onProgress: (p) => console.log(`${p.processed} processed, ${p.blocked} blocked`),
+});
+
+const result = await broadcaster.send("📣 v2 is live!");
+// { total, sent, blocked: ChatId[], failed: [{ chatId, error }], aborted, durationMs }
+```
+
+- **403** (bot blocked, kicked, user deactivated) → `result.blocked`, no retry.
+- **429** → the whole broadcast pauses for `retry_after`, then retries (`maxRetries`, default 3).
+- 5xx and network errors are retried with backoff; anything else goes to `result.failed`.
+- Pass `{ signal }` to `send` to abort.
+
+`createBroadcaster` is not a plugin — call it where you send (a script, an admin command).
+
+## Do / Don't
+
+- **Do** put `logger` and `errorReporter` first in `plugins`.
+- **Do** pass a shared `storage` driver to `rateLimit` when you run several instances.
+- **Don't** broadcast from inside a render — run it from a handler, script or cron.
+- **Don't** include `'raw'` or `'text'` in `errorReporter`'s `include` unless you're fine sending
+  user content to your error tracker.

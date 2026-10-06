@@ -185,57 +185,69 @@ Then run `teact webhook set <your-public-url>` once.
 Edge runtimes have no filesystem and freeze between requests, so a few things work differently than
 with `bun dev`:
 
-- **`teact.config.ts` is not loaded.** Pass plugins and the session store straight to `createBot`:
-
-  ```tsx
-  export const bot = createBot({
-    router,
-    adapter: new TelegramAdapter(),
-    plugins: [storagePlugin({ driver: kvDriver })], // a custom StorageDriver
-    session: { store: kvSessionStore },
-  });
-  ```
-
+- **`teact.config.ts` is not loaded.** Pass plugins and the session store straight to `createBot`
+  (see the example below).
 - **Use a durable session store.** The default in-memory store is per isolate, so sessions don't
   persist between requests. Teact logs a one-time warning when `bot.fetch()` runs with it.
 - **Use a durable storage driver.** The `'file'` driver warns and falls back to memory when there is
-  no filesystem. Write a `StorageDriver` backed by KV, D1, or Redis; see [Storage](/docs/guides/storage).
+  no filesystem. Use an edge-capable database package: D1 or KV via
+  [`@teactjs/cloudflare`](/docs/packages/cloudflare), Upstash via [`@teactjs/redis`](/docs/packages/redis),
+  or Neon's HTTP driver via [`@teactjs/postgres`](/docs/packages/postgres). See
+  [Databases](/docs/guides/databases).
 - **No work after the response.** [Streaming](/docs/guides/streaming), imperative
   [conversations](/docs/guides/conversations), and timers that fire after the reply need a
-  long-running process.
+  long-running process. Storage and session writes are fine: they are awaited before `bot.fetch()`
+  resolves.
 - **`.env` isn't read.** Configure secrets on the platform and pass the token through
   `bot.fetch(req, { token })`.
 
-### Example: Cloudflare KV session store
+### Example: Cloudflare D1 storage and sessions
 
-A `SessionStore` is three async methods. This one uses a KV namespace bound as `SESSIONS` in
-`wrangler.jsonc`:
-
-```ts title="src/kv-session-store.ts"
-import { env } from "cloudflare:workers";
-import type { SessionData, SessionStore } from "@teactjs/core";
-
-export const kvSessionStore: SessionStore = {
-  async get(key) {
-    return (await env.SESSIONS.get(`session:${key}`, "json")) as SessionData | null;
-  },
-  async set(key, data) {
-    await env.SESSIONS.put(`session:${key}`, JSON.stringify(data));
-  },
-  async delete(key) {
-    await env.SESSIONS.delete(`session:${key}`);
-  },
-};
-```
+`@teactjs/cloudflare` provides drivers and session stores for D1 (strongly consistent, recommended)
+and KV (eventually consistent). Bind a D1 database as `DB` in `wrangler.jsonc`:
 
 ```jsonc title="wrangler.jsonc"
 {
   // …
-  "kv_namespaces": [{ "binding": "SESSIONS", "id": "<namespace-id>" }]
+  "d1_databases": [{ "binding": "DB", "database_name": "my-bot", "database_id": "<id>" }]
 }
 ```
 
-`bot.fetch()` awaits the `set()` before it returns, so the write completes even on the edge.
+Lazy getters (`() => env.DB`) let you create the bot once at module scope, in the module your worker
+imports:
+
+```tsx
+import { env } from "cloudflare:workers";
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+
+export const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
+  session: { store: d1SessionStore(() => env.DB) },
+});
+```
+
+The table is created on first use. For KV, bind a namespace (`"kv_namespaces"`) and use
+`new KVDriver(() => env.BOT_KV)` / `kvSessionStore(() => env.BOT_KV)` — but avoid KV for state that
+changes on every message (multi-step forms, counters): it is eventually consistent and its TTLs have
+a 60-second minimum.
+
+<Callout type="info">
+  `cloudflare:workers` only exists inside a Worker. If the same entry also runs under `bun dev`, keep
+  the Workers-only wiring in the module your worker imports, or build the bot inside the `fetch`
+  handler and pass the plain bindings (`new D1Driver(env.DB)`).
+</Callout>
+
+### Other edge databases
+
+- **Upstash Redis** (any fetch runtime): `new RedisDriver({ client: Redis.fromEnv() })` and
+  `redisSessionStore({ client })` from `@teactjs/redis`, with `@upstash/redis`.
+- **Neon Postgres** (any fetch runtime): `new PostgresDriver({ client: neon(process.env.DATABASE_URL!) })`
+  and `postgresSessionStore(driver)` from `@teactjs/postgres`.
 
 ### Switching back to polling
 
@@ -252,7 +264,8 @@ bun dev
   for both modes.
 - **Do** set a `WEBHOOK_SECRET` and pass it as `secretToken`, so only Telegram can call your
   endpoint.
-- **Do** pass `plugins` and `session.store` to `createBot()` for edge deploys.
+- **Do** pass `plugins` and `session.store` to `createBot()` for edge deploys, using an edge-capable
+  database package.
 - **Don't** run more than one polling instance per token.
 - **Don't** rely on the in-memory session store, the `'file'` storage driver, or streaming on the
   edge.

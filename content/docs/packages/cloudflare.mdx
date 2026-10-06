@@ -1,0 +1,139 @@
+---
+title: "@teactjs/cloudflare"
+description: Workers KV and D1 storage drivers and durable session stores for Teact bots on Cloudflare Workers.
+---
+
+Storage for Teact bots on Cloudflare Workers:
+
+- **`D1Driver`** — [D1](https://developers.cloudflare.com/d1/) (SQLite). Strongly consistent.
+  **Recommended for bot state and sessions.**
+- **`KVDriver`** — [Workers KV](https://developers.cloudflare.com/kv/). Eventually consistent and
+  fast to read globally. Good for settings and caches.
+- **`d1SessionStore` / `kvSessionStore`** — durable `SessionStore`s for
+  `createBot({ session: { store } })`.
+
+There are no runtime dependencies. Bindings are typed structurally, so
+`@cloudflare/workers-types` is optional.
+
+```bash
+bun add @teactjs/cloudflare @teactjs/storage
+```
+
+`teact add cloudflare --client d1` (or `kv`) installs it and prints the snippet — it is not
+auto-inserted, because `cloudflare:workers` only exists inside a Worker.
+
+## Exports
+
+| Export | Kind | Description |
+| ------ | ---- | ----------- |
+| `D1Driver` | class | `new D1Driver(binding \| () => binding, { table? })` — `AsyncStorageDriver` on D1. |
+| `KVDriver` | class | `new KVDriver(binding \| () => binding, { namespace?, concurrency? })` — `AsyncStorageDriver` on KV. |
+| `d1SessionStore` | function | `d1SessionStore(db, { table?, prefix?, ttl? })` → `SessionStore`. |
+| `kvSessionStore` | function | `kvSessionStore(kv, { namespace?, prefix?, ttl? })` → `SessionStore`. |
+| `kvExpirationTtl`, `KV_MIN_TTL_SECONDS` | utils | Millisecond → KV `expirationTtl` conversion; `60`. |
+| `escapeLike`, `DEFAULT_D1_TABLE` | utils | `LIKE` escaping; `'teact_storage'`. |
+| `KVNamespaceLike`, `D1DatabaseLike`, `Lazy`, `KVDriverOptions`, `D1DriverOptions` | types | Structural binding types and options. |
+
+## Bindings
+
+```jsonc title="wrangler.jsonc"
+{
+  // …
+  "d1_databases": [{ "binding": "DB", "database_name": "mybot", "database_id": "<id>" }],
+  "kv_namespaces": [{ "binding": "BOT_KV", "id": "<namespace-id>" }]
+}
+```
+
+Every driver and session store accepts `binding | (() => binding)`. A getter is resolved on each
+call, never at construction, so you can build the bot once at module scope with
+`import { env } from "cloudflare:workers"`:
+
+```ts title="src/worker.ts"
+import { env } from "cloudflare:workers";
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+
+const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
+  session: { store: d1SessionStore(() => env.DB) },
+});
+
+export default {
+  fetch: (req: Request) =>
+    bot.fetch(req, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+};
+```
+
+If you build the bot inside the handler instead, pass the plain binding: `new D1Driver(env.DB)`.
+
+## D1Driver
+
+```ts
+new D1Driver(() => env.DB, { table: "teact_storage" /* default */ });
+```
+
+- The table `teact_storage(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)` is created
+  lazily with `CREATE TABLE IF NOT EXISTS`, once per driver instance. Add it to your migrations if
+  you prefer.
+- Values are JSON text; `expires_at` is epoch milliseconds.
+- Prefix queries use `LIKE ? ESCAPE '\'` with an extra exact, case-sensitive match (SQLite's `LIKE`
+  ignores ASCII case). `entries()` is a single `SELECT`.
+- TTL is exact to the millisecond. Expired rows are hidden on read; to reclaim space, call
+  `driver.purgeExpired()` from a Cron Trigger:
+
+  ```ts
+  const driver = new D1Driver(() => env.DB);
+
+  export default {
+    fetch: (req: Request) => bot.fetch(req),
+    scheduled: () => driver.purgeExpired(),
+  };
+  ```
+
+## KVDriver
+
+```ts
+new KVDriver(() => env.BOT_KV, { namespace: "mybot:" /* optional key prefix */ });
+```
+
+- Values are JSON text.
+- **TTL**: KV's minimum `expirationTtl` is **60 seconds**. `set(k, v, { ttl })` converts
+  milliseconds to seconds, rounding up, with a floor of 60s — a `ttl` of 5000 lives for 60s.
+- `keys()` and `clear()` page through `list({ prefix, cursor })`. `entries()` lists the keys, then
+  reads the values in parallel (`concurrency`, default 50).
+- **Consistency**: KV is eventually consistent. Writes can take up to about 60s to reach other
+  locations, and KV allows about one write per second per key.
+- **Cost**: each update runs a `list` plus one `get` per key in the chat.
+
+<Callout type="warn">
+Avoid KV for per-message state such as counters, multi-step forms or wizards — a user whose
+consecutive updates land in different locations may read a stale value. Use D1 for those.
+</Callout>
+
+## Sessions
+
+```ts
+import { d1SessionStore, kvSessionStore } from "@teactjs/cloudflare";
+
+createBot({ session: { store: d1SessionStore(() => env.DB, { ttl: 7 * 24 * 3600_000 }) } });
+// or (eventually consistent, ttl rounded up to ≥ 60s):
+createBot({ session: { store: kvSessionStore(() => env.SESSIONS, { prefix: "session:" }) } });
+```
+
+## Serverless notes
+
+- The storage plugin awaits every write before `bot.fetch()` resolves, so nothing is lost when the
+  isolate freezes. You don't need `ctx.waitUntil`.
+- For Redis on Workers, use [`@teactjs/redis`](/docs/packages/redis) with `@upstash/redis` (HTTP).
+- For Postgres on Workers, use [`@teactjs/postgres`](/docs/packages/postgres) with Neon's HTTP driver.
+
+## Do / Don't
+
+- **Do** use D1 for sessions and anything that changes per message.
+- **Do** use lazy getters (`() => env.DB`) when the bot is created at module scope.
+- **Don't** rely on KV for read-after-write consistency.
+- **Don't** expect sub-minute TTLs on KV.

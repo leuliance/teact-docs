@@ -1,7 +1,11 @@
 ---
 title: Storage
-description: storagePlugin with file or memory drivers; useStorage and useGlobalStorage for persistent key-value state.
+description: storagePlugin with memory, file or database drivers; useStorage, useGlobalStorage and useStorageBackend for persistent key-value state.
 ---
+
+`@teactjs/storage` gives every component persistent, chat-scoped state through `useStorage`. The
+backend is pluggable: built-in memory and file drivers for development and single-process bots, or a
+database package for production.
 
 ## Plugin
 
@@ -14,11 +18,25 @@ storagePlugin({
 });
 ```
 
-The `file` driver's `path` is a **JSON file** (not a directory). Drivers: `"memory"` (ephemeral), `"file"` (JSON on disk), or a custom **`StorageDriver`**.
+`driver` is `"memory"` (default, ephemeral), `"file"` (JSON on disk — `path` is a **file**, not a
+directory), or a driver instance:
+
+```ts
+import { SqliteDriver } from "@teactjs/sqlite";
+storagePlugin({ driver: new SqliteDriver({ path: "./data/bot.db" }) });
+
+import { PostgresDriver } from "@teactjs/postgres";
+storagePlugin({ driver: new PostgresDriver({ client: pool }) });
+```
+
+Ready-made drivers: [Redis](/docs/packages/redis), [Postgres](/docs/packages/postgres),
+[SQLite](/docs/packages/sqlite), [MongoDB](/docs/packages/mongodb) and
+[Cloudflare KV/D1](/docs/packages/cloudflare). The [Databases guide](/docs/guides/databases) helps you
+choose one. `teact create my-bot --db sqlite` and `teact add redis` set them up for you.
 
 ## useStorage
 
-Reactive per-key state:
+Reactive per-key state, scoped to the current chat:
 
 ```tsx
 import { useStorage } from "@teactjs/storage";
@@ -26,8 +44,44 @@ import { useStorage } from "@teactjs/storage";
 const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
 ```
 
+It reads synchronously with every driver. With an async (database) driver, the plugin loads the
+chat's keys before the update and awaits your writes before the update finishes, so the value you
+set is durable by the time the bot replies.
+
 ## useGlobalStorage
 
-Low-level async API: `get`, `set`, `delete`, `has`, `keys`, `clear`.
+A synchronous driver that is **not** scoped to a chat: `get`, `set`, `delete`, `has`, `keys`,
+`clear`. Use it for data shared across chats.
 
-See [@teactjs/storage](/docs/packages/storage).
+With an async driver it is a view over the per-update cache: it only sees the current chat's keys and
+the prefixes listed in `preload`:
+
+```ts
+storagePlugin({ driver, preload: ["global:"] });
+
+// in a component
+const storage = useGlobalStorage();
+const motd = storage.get<string>("global:motd");
+```
+
+## useStorageBackend
+
+The driver exactly as you passed it — sync or async. Use it for queries outside the cache, typically
+inside `useQuery` or a handler:
+
+```tsx
+const backend = useStorageBackend();
+const { data: keys } = useQuery({ key: "leaders", fn: () => backend.keys("leaderboard:") });
+```
+
+## Sessions
+
+Storage drivers can also back the session store, so sessions survive restarts:
+
+```ts
+import { createSessionStore } from "@teactjs/storage";
+
+createBot({ session: { store: createSessionStore(driver, { ttl: 7 * 24 * 3600_000 }) } });
+```
+
+See [@teactjs/storage](/docs/packages/storage) for the full API.

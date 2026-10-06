@@ -17,10 +17,33 @@ await bot.start();
 adapter.simulateMessage("1", "1", "/start");
 adapter.simulateCallback("1", "1", "ok");
 
+// simulate the sender's Telegram language (language_code)
+adapter.simulateMessage("2", "2", "/start", { languageCode: "de" });
+adapter.simulateCallback("2", "2", "ok", undefined, { languageCode: "de" });
+
 adapter.getLastSent();
 adapter.sent;
 adapter.edited;
 adapter.reset();
+```
+
+`languageCode` lands on `ctx.user.languageCode`, which is what i18n detection reads — use it to
+test [locale detection](/docs/guides/i18n#how-the-locale-is-chosen).
+
+## Testing with storage
+
+`MemoryAsyncDriver` from `@teactjs/storage` behaves like a database driver (async, per-update cache,
+TTL) without a server, so you can exercise the same code paths as Redis or Postgres:
+
+```ts
+import { storagePlugin, MemoryAsyncDriver } from "@teactjs/storage";
+
+const bot = createBot({
+  component: App,
+  adapter,
+  token: "test",
+  plugins: [storagePlugin({ driver: new MemoryAsyncDriver() })],
+});
 ```
 
 ## renderBot

@@ -1,0 +1,258 @@
+---
+title: Databases
+description: Choose a storage backend, use async database drivers with useStorage, make sessions durable, and write your own driver.
+---
+
+`useStorage` and the session store work with any backend that implements Teact's driver interface.
+Teact ships drivers for Redis, Postgres, SQLite, MongoDB and Cloudflare KV/D1; each package provides
+a **storage driver** (for `storagePlugin`), a **session store** (for `createBot({ session })`) and,
+where useful, a **plugin + hook** that gives components the raw client.
+
+## Choosing a backend
+
+| Backend | Package | Long-running | Edge / serverless | Driver | TTL |
+| ------- | ------- | ------------ | ----------------- | ------ | --- |
+| Memory | `@teactjs/storage` | ✓ (lost on restart) | ✗ (per isolate) | sync | — |
+| File (JSON) | `@teactjs/storage` | ✓ | ✗ (no filesystem) | sync | — |
+| SQLite | [`@teactjs/sqlite`](/docs/packages/sqlite) | ✓ (`bun:sqlite`, `better-sqlite3`) | ✗ | sync | ✓ |
+| Redis | [`@teactjs/redis`](/docs/packages/redis) | ✓ (ioredis, node-redis, Bun) | ✓ with `@upstash/redis` (HTTP) | async | ✓ native (`PX`) |
+| Postgres | [`@teactjs/postgres`](/docs/packages/postgres) | ✓ (pg, postgres.js, PGlite) | ✓ with Neon `neon()` (HTTP) | async | ✓ (`expires_at`) |
+| MongoDB | [`@teactjs/mongodb`](/docs/packages/mongodb) | ✓ | Node serverless (Lambda, Vercel Node); limited on Workers | async | ✓ (TTL index) |
+| Cloudflare D1 | [`@teactjs/cloudflare`](/docs/packages/cloudflare) | ✗ | ✓ Workers (strongly consistent) | async | ✓ (exact) |
+| Cloudflare KV | [`@teactjs/cloudflare`](/docs/packages/cloudflare) | ✗ | ✓ Workers (eventually consistent) | async | ✓ (min 60s) |
+
+Rules of thumb:
+
+- **One process on a VM or container** — SQLite. No server to run, synchronous reads.
+- **Several instances, or you already run Redis/Postgres** — Redis or Postgres.
+- **Cloudflare Workers** — D1 for state and sessions; KV only for rarely-changing settings or caches.
+- **Vercel Edge / Deno / other fetch-only runtimes** — Upstash Redis or Neon Postgres over HTTP.
+
+`teact create my-bot --db sqlite|redis|postgres` scaffolds a project with the driver already wired,
+and `teact add <db> --client <client>` adds one to an existing project. See the
+[CLI reference](/docs/packages/cli).
+
+## How async drivers work with `useStorage`
+
+`useStorage` reads synchronously during render, but most databases are asynchronous. When you pass an
+`AsyncStorageDriver` to `storagePlugin`, the plugin wraps it in a per-update cache:
+
+1. **Hydrate.** Before each update, it loads every key of the current chat
+   (`<platform>:<chatId>:*`) with one `entries(prefix)` call — e.g. one `SCAN` + `MGET` on Redis, one
+   `SELECT` on Postgres/D1, one `find()` on MongoDB.
+2. **Render.** Components read from that cache. A `set` updates the cache immediately (so the next
+   render sees it) and queues the database write.
+3. **Flush.** Every queued write is awaited before the update finishes. On serverless this means
+   writes have landed before `bot.fetch()` resolves and the isolate freezes — no `waitUntil` needed.
+   If a write fails, the error surfaces at the end of the update (and is logged).
+
+Because the cache is re-hydrated on every update, a value written by another instance shows up on
+the next update.
+
+Sync drivers (memory, file, SQLite) skip the cache: reads and writes go straight to the backend.
+
+### Data outside the current chat
+
+`useGlobalStorage()` with an async driver only sees the cached prefixes. Add shared prefixes to
+`preload` to load them before every update:
+
+```ts
+storagePlugin({ driver, preload: ["global:"] });
+
+// any component, synchronously:
+const motd = useGlobalStorage().get<string>("global:motd");
+```
+
+Keep `preload` prefixes small — they are fetched on every update. For larger or occasional queries,
+use `useStorageBackend()`, which returns the driver itself:
+
+```tsx
+import { useQuery } from "@teactjs/core";
+import { useStorageBackend } from "@teactjs/storage";
+
+function AllChats() {
+  const backend = useStorageBackend();
+  const { data } = useQuery({ key: "chat-count", fn: () => backend.keys("telegram:") });
+  // ...
+}
+```
+
+For queries that don't fit a key/value model, use the package's plugin and hook (`useRedis`,
+`usePostgres`, `useSqlite`, `useMongo`) to reach the client directly.
+
+## Durable sessions
+
+The default session store is in memory: sessions disappear on restart and are not shared between
+serverless isolates. Every database package exports a session store:
+
+| Package | Session store |
+| ------- | ------------- |
+| `@teactjs/redis` | `redisSessionStore({ client, namespace?, prefix?, ttl? })` |
+| `@teactjs/postgres` | `postgresSessionStore(driverOrOptions, { prefix?, ttl? })` |
+| `@teactjs/sqlite` | `sqliteSessionStore(driverOrOptions, { prefix?, ttl? })` |
+| `@teactjs/mongodb` | `mongoSessionStore({ db, collectionName?, prefix?, ttl? })` |
+| `@teactjs/cloudflare` | `d1SessionStore(db, { prefix?, ttl? })`, `kvSessionStore(kv, { prefix?, ttl? })` |
+
+Or turn any driver into one with `createSessionStore` from `@teactjs/storage`:
+
+```ts
+import { createSessionStore } from "@teactjs/storage";
+
+createBot({
+  session: { store: createSessionStore(driver, { prefix: "session:", ttl: 30 * 24 * 3600_000 }) },
+});
+```
+
+Session writes are awaited before the update completes. A durable session store also keeps the
+user's chosen language when you use [i18n](/docs/guides/i18n) persistence.
+
+## Examples
+
+### SQLite (single server)
+
+```ts
+import { createBot } from "@teactjs/core";
+import { storagePlugin } from "@teactjs/storage";
+import { SqliteDriver, sqliteSessionStore } from "@teactjs/sqlite";
+
+const sqlite = new SqliteDriver({ path: "./data/bot.db" });
+
+export const bot = createBot({
+  component: App,
+  plugins: [storagePlugin({ driver: sqlite })],
+  session: { store: sqliteSessionStore(sqlite) },
+});
+```
+
+### Redis
+
+```ts
+import Redis from "ioredis";
+import { RedisDriver, redisSessionStore } from "@teactjs/redis";
+
+const redis = new Redis(process.env.REDIS_URL!);
+
+export const bot = createBot({
+  component: App,
+  plugins: [storagePlugin({ driver: new RedisDriver({ client: redis, namespace: "mybot:" }) })],
+  session: { store: redisSessionStore({ client: redis, namespace: "mybot:" }) },
+});
+```
+
+On the edge, swap the client for `Redis.fromEnv()` from `@upstash/redis`.
+
+### Postgres
+
+```ts
+import postgres from "postgres";
+import { PostgresDriver, postgresSessionStore } from "@teactjs/postgres";
+
+const pg = new PostgresDriver({ client: postgres(process.env.DATABASE_URL!) });
+
+export const bot = createBot({
+  component: App,
+  plugins: [storagePlugin({ driver: pg })],
+  session: { store: postgresSessionStore(pg, { ttl: 30 * 24 * 3600_000 }) },
+});
+```
+
+On the edge, use `neon(process.env.DATABASE_URL!)` from `@neondatabase/serverless` as the client.
+
+### MongoDB
+
+```ts
+import { MongoClient } from "mongodb";
+import { MongoDriver, mongoSessionStore } from "@teactjs/mongodb";
+
+const client = await new MongoClient(process.env.MONGO_URL!).connect();
+const db = client.db("mybot");
+const driver = new MongoDriver({ db });
+await driver.ensureIndexes();
+
+export const bot = createBot({
+  component: App,
+  plugins: [storagePlugin({ driver })],
+  session: { store: mongoSessionStore({ db, collectionName: "sessions" }) },
+});
+```
+
+### Cloudflare D1
+
+```ts title="src/worker.ts"
+import { env } from "cloudflare:workers";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+
+const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
+  session: { store: d1SessionStore(() => env.DB) },
+});
+
+export default {
+  fetch: (req: Request) =>
+    bot.fetch(req, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+};
+```
+
+## Writing your own driver
+
+Implement `AsyncStorageDriver` from `@teactjs/storage` and mark it with `async: true`:
+
+```ts
+import type { AsyncStorageDriver, SetOptions } from "@teactjs/storage";
+
+export class MyDriver implements AsyncStorageDriver {
+  readonly async = true as const;
+
+  async get<T>(key: string): Promise<T | undefined> { /* ... */ }
+  async set<T>(key: string, value: T, opts?: SetOptions): Promise<void> { /* opts.ttl in ms */ }
+  async delete(key: string): Promise<void> { /* ... */ }
+  async has(key: string): Promise<boolean> { /* ... */ }
+  async keys(prefix = ""): Promise<string[]> { /* keys starting with prefix */ }
+  async clear(prefix = ""): Promise<void> { /* only keys starting with prefix */ }
+
+  // Optional but recommended: load a whole prefix in one query.
+  // Without it, the plugin falls back to keys(prefix) + one get() per key.
+  async entries(prefix: string): Promise<Array<[string, unknown]>> { /* ... */ }
+
+  // Optional: release connections; storagePlugin calls it when the bot stops.
+  async close(): Promise<void> { /* ... */ }
+}
+```
+
+Guidelines:
+
+- Store values as JSON (or a native document type) and return them unchanged: strings, numbers,
+  booleans, `null`, arrays and objects must round-trip.
+- Match prefixes **literally** — escape `%`/`_` in SQL `LIKE`, glob characters in Redis `SCAN`, regex
+  characters in MongoDB.
+- `clear(prefix)` must only delete keys under that prefix; other chats' data lives in the same store.
+- Implement `entries` with a single query; it runs on every update.
+
+A synchronous backend can implement the simpler `StorageDriver` interface instead and skip the cache
+entirely.
+
+### Test it with `runDriverConformance`
+
+`runDriverConformance` runs the shared behaviour tests that the built-in drivers use. Pass your test
+runner's functions so the package never imports one itself:
+
+```ts title="my-driver.test.ts"
+import { describe, test, expect } from "bun:test";
+import { runDriverConformance } from "@teactjs/storage";
+import { MyDriver } from "./my-driver";
+
+runDriverConformance("MyDriver", () => new MyDriver(/* a fresh, empty store */), {
+  describe,
+  test,
+  expect,
+  // skipTtl: true, // if the backend can't expire keys quickly in-process
+});
+```
+
+`MemoryAsyncDriver` from `@teactjs/storage` is a compact reference implementation (it honours `ttl`)
+and a handy async driver for your own bot tests.
+
+Wrap the driver in a plugin if you want to expose the client to components — see
+[`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk).
