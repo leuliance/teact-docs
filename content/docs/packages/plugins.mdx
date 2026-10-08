@@ -74,8 +74,10 @@ message), an `OutputNode` (sent as-is), or `(ctx, reply) => …` for full contro
 
 `rateLimit` and `analytics` keep counters in memory by default. Pass any `@teactjs/storage` driver
 (sync or async, e.g. a [`RedisDriver`](/docs/packages/redis)) as `storage` to share them across
-instances. Increments are serialized per process; across instances they are read-modify-write, so
-under heavy concurrency a few hits may be lost.
+instances. When the driver has an atomic `incr()` — Redis, Postgres, SQLite, D1 and MongoDB do,
+Cloudflare KV doesn't — counters are **exact across instances**. Without it, increments are
+serialized per process and read-modify-write across instances, so under heavy concurrency a few
+hits may be lost. See [TTL and counters](/docs/guides/databases#ttl-and-counters).
 
 ## `rateLimit(options)`
 
@@ -89,8 +91,27 @@ under heavy concurrency a few hits may be lost.
 | `storage` | memory | `AnyStorageDriver` for multi-instance limits |
 | `prefix` | `'teact:ratelimit:'` | Storage key prefix |
 
+For a limit that holds **across instances**, use `strategy: 'fixed'` with a shared driver: each hit
+is one atomic `incr()`. `'sliding'` is exact within one process only.
+
 ```ts
-rateLimit({ window: 60_000, limit: 20, key: "chat", storage: new RedisDriver({ client: redis }) });
+rateLimit({
+  window: 60_000,
+  limit: 20,
+  key: "chat",
+  strategy: "fixed",
+  storage: new RedisDriver({ client: redis }),
+});
+```
+
+You can list `rateLimit` more than once to layer limits — every copy in the same `plugins` list
+runs:
+
+```ts
+plugins: [
+  rateLimit({ key: "user", window: 1000, limit: 3 }),
+  rateLimit({ key: "chat", window: 60_000, limit: 60 }),
+],
 ```
 
 ## `logger(options)`
@@ -151,6 +172,9 @@ errorReporter({
 });
 ```
 
+`include: ['raw']` attaches the plain platform update (for Telegram, the `Update` object). It never
+includes the grammY context, which carries the API client and your bot token.
+
 Middleware errors are reported and swallowed (`notifyUser` is sent if set). A failing `report()` is
 logged and never breaks the update. Set `captureRenderErrors: false` to only watch middleware.
 
@@ -175,6 +199,13 @@ function BuyButton() {
 
 Per-day counters expire after `retentionDays` (default 90). Call `track` from handlers or effects,
 not during render.
+
+- Counts are recorded alongside the update, with atomic increments when the driver supports
+  `incr()`, so several instances sharing one driver report exact totals.
+- Only Telegram-shaped command names (`a-z`, `0-9`, `_`, up to 32 characters) are counted, so users
+  can't grow the stats with made-up commands.
+- `commands` and `events` keep at most 100 distinct names each; further names are counted under
+  `'(other)'`.
 
 ## `featureFlags(options)` + `useFlag(name)`
 
@@ -216,14 +247,17 @@ const result = await broadcaster.send("📣 v2 is live!");
 - **403** (bot blocked, kicked, user deactivated) → `result.blocked`, no retry.
 - **429** → the whole broadcast pauses for `retry_after`, then retries (`maxRetries`, default 3).
 - 5xx and network errors are retried with backoff; anything else goes to `result.failed`.
-- Pass `{ signal }` to `send` to abort.
+- Pass `{ signal }` to `send` to abort: no new sends start, sends waiting to retry stop and are
+  reported in `result.failed`, sends already in flight finish, and `result.aborted` is `true`.
+- If `recipients()` throws, sends already started still finish before the error propagates.
 
 `createBroadcaster` is not a plugin — call it where you send (a script, an admin command).
 
 ## Do / Don't
 
 - **Do** put `logger` and `errorReporter` first in `plugins`.
-- **Do** pass a shared `storage` driver to `rateLimit` when you run several instances.
+- **Do** pass a shared `storage` driver and `strategy: 'fixed'` to `rateLimit` when you run several
+  instances.
 - **Don't** broadcast from inside a render — run it from a handler, script or cron.
 - **Don't** include `'raw'` or `'text'` in `errorReporter`'s `include` unless you're fine sending
   user content to your error tracker.

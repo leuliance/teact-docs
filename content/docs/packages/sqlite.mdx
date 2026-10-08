@@ -26,7 +26,7 @@ npm i better-sqlite3
 | `sqlitePlugin` | plugin | Registers the driver as the `'sqlite'` service. |
 | `useSqlite` | hook | Returns the registered `SqliteDriver` (`.db` is the raw handle). |
 | `createSqliteTableSql` | function | The DDL the driver runs. |
-| `quoteSqliteIdent`, `escapeLike`, `SQLITE_SERVICE` | utils | Identifier quoting, `LIKE` escaping, service key. |
+| `quoteSqliteIdent`, `SQLITE_SERVICE` | utils | Identifier quoting, service key. |
 | `SqliteDriverOptions`, `SqlitePluginOptions`, `SqliteDatabase`, `SqliteStatement` | types | Options and database shapes. |
 
 ## Storage
@@ -40,7 +40,7 @@ import { createBot } from "@teactjs/core";
 import { storagePlugin } from "@teactjs/storage";
 import { SqliteDriver } from "@teactjs/sqlite";
 
-const sqlite = new SqliteDriver({ path: "./data/bot.db" }); // created if missing, WAL mode
+const sqlite = new SqliteDriver({ path: "./data/bot.db" }); // file and parent dirs created if missing, WAL mode
 
 createBot({ plugins: [storagePlugin({ driver: sqlite })] /* ... */ });
 ```
@@ -67,7 +67,7 @@ in.
 
 | Option | Default | Notes |
 | ------ | ------- | ----- |
-| `path` | — | File to open, or `':memory:'`. WAL is enabled for files. |
+| `path` | — | File to open, or `':memory:'`. Missing parent directories are created; WAL is enabled for files. |
 | `db` | — | An open `bun:sqlite` / `better-sqlite3` database. |
 | `table` | `'teact_storage'` | Validated: `[A-Za-z_][A-Za-z0-9_]*`, max 63 chars. |
 | `closeDb` | `false` | Close a passed-in `db` in `close()`. |
@@ -85,7 +85,8 @@ Values are stored as JSON; `expires_at` holds epoch milliseconds.
 
 ```ts
 sqlite.get<T>(key);               // T | undefined (expired rows read as missing)
-sqlite.set(key, value, { ttl });  // ttl in ms, optional; set(key, undefined) deletes
+sqlite.set(key, value, { ttl });  // ttl in ms, optional (0, negative or Infinity = no expiry); set(key, undefined) deletes
+sqlite.incr(key, by?, { ttl? });  // atomic counter (one UPSERT … RETURNING); ttl only on create
 sqlite.delete(key); sqlite.has(key);
 sqlite.keys(prefix?);             // sorted; prefix matched literally and case-sensitively
 sqlite.entries(prefix?);          // [key, value][] in one query

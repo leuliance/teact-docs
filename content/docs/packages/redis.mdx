@@ -27,9 +27,9 @@ Or let the CLI install and wire it: `teact add redis --client ioredis` (`ioredis
 
 | Export | Kind | Description |
 | ------ | ---- | ----------- |
-| `RedisDriver` | class | `AsyncStorageDriver` for `storagePlugin`. Options: `client`, `clientKind?`, `namespace?`, `closeClient?` (default `true`). |
+| `RedisDriver` | class | `AsyncStorageDriver` for `storagePlugin`. Options: `client`, `clientKind?`, `namespace?`, `closeClient?` (default `false`). |
 | `redisSessionStore` | function | `redisSessionStore({ client, namespace?, prefix?, ttl? })` → `SessionStore`. |
-| `redisPlugin` | plugin | `redisPlugin({ client, closeOnStop? })` — registers the client as the `'redis'` service. |
+| `redisPlugin` | plugin | `redisPlugin({ client, closeOnStop? })` — registers the client as the `'redis'` service (`closeOnStop` defaults to `false`). |
 | `useRedis` | hook | `useRedis<C>()` → the client registered by `redisPlugin`. |
 | `fromIoredis`, `fromNodeRedis`, `fromBunRedis`, `fromUpstash` | functions | Explicit client adapters when auto-detection guesses wrong. |
 | `toRedisCommands`, `detectRedisClient`, `markNormalized` | functions | Lower-level adapter helpers. |
@@ -82,7 +82,11 @@ works if you implement the small `RedisCommands` interface (`get`, `set(key, val
 ### How data is stored
 
 - **Values** are JSON strings, so any Redis tool can read them.
-- **TTL**: `driver.set(key, value, { ttl: ms })` becomes `SET key value PX ms`.
+- **TTL**: `driver.set(key, value, { ttl: ms })` becomes `SET key value PX ms`. A `ttl` of `0`, a
+  negative number or `Infinity` means "no expiry".
+- **Counters**: `driver.incr(key, by?, { ttl? })` is atomic (one Lua script per call, on every
+  client). The `ttl` only applies when the increment creates the key. `@teactjs/plugins` uses it for
+  exact rate limits and analytics across instances.
 - **Prefix queries** use `SCAN … MATCH <prefix>*` with glob characters escaped. The driver never
   calls `KEYS`, so it never blocks the server.
 - **`clear()`** only deletes keys under the `namespace` and never runs `FLUSHDB`. Without a
@@ -90,11 +94,26 @@ works if you implement the small `RedisCommands` interface (`get`, `set(key, val
 - **Upstash** JSON-parses values on read by default; the adapter accounts for that, so a stored
   string `"42"` comes back as `"42"`, not `42`.
 
+### ioredis Cluster
+
+An ioredis `Cluster` is detected automatically: prefix queries `SCAN` every master node and
+multi-key reads and deletes go key by key, so you never hit `CROSSSLOT` errors.
+
+```ts
+import { Cluster } from "ioredis";
+
+new RedisDriver({ client: new Cluster([{ host: "redis-1", port: 6379 }]), namespace: "mybot:" });
+```
+
+Use the driver's `namespace` option rather than ioredis' `keyPrefix`: `keyPrefix` is not applied to
+`SCAN` patterns or results, so prefix queries would miss your keys.
+
 ### Closing
 
-`driver.close()` closes the client, and `storagePlugin` calls it when the bot stops. Pass
-`closeClient: false` if other code shares the client. Closing is idempotent across Teact, so a
-client shared with `redisPlugin` is only closed once.
+The driver never closes a client you pass in. Set `closeClient: true` to have `driver.close()`
+(which `storagePlugin` calls when the bot stops) close it — useful when the driver owns its own
+client. Closing is idempotent across Teact, so a client shared with `redisPlugin` is only closed
+once.
 
 ## Sessions
 
@@ -125,7 +144,7 @@ const redis = new Redis(process.env.REDIS_URL!);
 
 createBot({
   plugins: [
-    redisPlugin({ client: redis }), // service 'redis', closed on stop
+    redisPlugin({ client: redis, closeOnStop: true }), // service 'redis', closed on stop
     storagePlugin({ driver: new RedisDriver({ client: redis }) }),
   ],
 });
@@ -136,8 +155,9 @@ function Leaderboard() {
 }
 ```
 
-`redisPlugin({ client, closeOnStop = true })` registers the client unchanged, so
-`useService("redis")` works too.
+`redisPlugin({ client, closeOnStop = false })` registers the client unchanged, so
+`useService("redis")` works too. It only closes the client when the bot stops if you pass
+`closeOnStop: true`.
 
 ## Serverless and edge
 
@@ -150,5 +170,6 @@ function Leaderboard() {
 
 - **Do** set a `namespace` when several bots or apps share one Redis database.
 - **Do** use `@upstash/redis` on edge runtimes.
+- **Don't** use ioredis' `keyPrefix` option; use `namespace` instead.
 - **Don't** call `clear()` without a namespace on a shared database — it removes every key.
 - **Don't** create a new client per request on serverless.

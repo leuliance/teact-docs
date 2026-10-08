@@ -32,7 +32,7 @@ structural interfaces and never imports them. With the CLI: `teact add postgres 
 | `fromPg`, `fromPostgresJs`, `fromNeon`, `fromPglite` | functions | Explicit client adapters. |
 | `toQueryFn`, `closeClient` | functions | Lower-level client helpers. |
 | `createTableSql`, `createTableStatements` | functions | The DDL the driver runs, for your own migrations. |
-| `quotePgIdent`, `escapeLike`, `POSTGRES_SERVICE` | utils | Identifier quoting, `LIKE` escaping, service key. |
+| `quotePgIdent`, `POSTGRES_SERVICE` | utils | Identifier quoting, service key. |
 | `PostgresDriverOptions`, `PostgresPluginOptions`, `QueryFn`, `PostgresClient` | types | Options and client shapes. |
 
 ## Clients
@@ -92,9 +92,13 @@ it awaits every write before the update finishes, so writes are durable even on 
 ### Schema and migrations
 
 ```sql
-CREATE TABLE IF NOT EXISTS "teact_storage" (key TEXT COLLATE "C" PRIMARY KEY, value JSONB NOT NULL, expires_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS "teact_storage" (key TEXT COLLATE "C" PRIMARY KEY, value JSON NOT NULL, expires_at TIMESTAMPTZ);
 CREATE INDEX IF NOT EXISTS "teact_storage_expires_at_idx" ON "teact_storage" (expires_at) WHERE expires_at IS NOT NULL;
 ```
+
+Values are stored in a `JSON` column, which keeps object key order and strings containing `\u0000`
+exactly as written. Tables created with a `JSONB` column by earlier versions keep working, so there
+is nothing to migrate.
 
 `createTableSql(table, schema?)` returns this DDL. If you run migrations yourself (Drizzle Kit,
 Prisma Migrate, Supabase migrations), add it there and pass `autoMigrate: false`. `COLLATE "C"`
@@ -104,7 +108,8 @@ lets prefix queries (`LIKE 'prefix%'`) use the primary-key index.
 
 ```ts
 await pg.get<T>(key);               // expiry is checked in SQL against now()
-await pg.set(key, value, { ttl });  // upsert; ttl in ms
+await pg.set(key, value, { ttl });  // upsert; ttl in ms (0, negative or Infinity = no expiry)
+await pg.incr(key, by?, { ttl? });  // atomic counter (one UPSERT … RETURNING); ttl only on create
 await pg.delete(key); await pg.has(key);
 await pg.keys(prefix?); await pg.entries(prefix); await pg.clear(prefix?);
 await pg.purgeExpired();            // DELETE expired rows; returns the count (run from a cron)

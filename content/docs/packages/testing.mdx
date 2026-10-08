@@ -31,7 +31,7 @@ import { MockAdapter } from "@teactjs/testing";
 import { createBot } from "@teactjs/core";
 
 const adapter = new MockAdapter();
-const bot = createBot({ component: App, adapter, token: "test" });
+const bot = createBot({ component: App, adapter }); // no token needed
 await bot.start();
 
 await adapter.simulateMessage("1", "1", "/start");   // (chatId, userId, text)
@@ -46,6 +46,9 @@ adapter.sent;          // SentMessage[]
 adapter.edited;        // EditedMessage[]
 adapter.reset();
 ```
+
+`MockAdapter` doesn't need a bot token, so `createBot()` works in tests without `token` or
+`TELEGRAM_BOT_TOKEN`.
 
 `languageCode` is set on `ctx.user.languageCode`, so locale detection in
 [i18n](/docs/guides/i18n) picks it up.

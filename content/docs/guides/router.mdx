@@ -127,8 +127,13 @@ params={{ id }} />` — see [Components](/docs/guides/components).
 
 ## Params
 
-`useParams<T>()` gives typed access to dynamic segments. For `/pokemon/:id`,
-`useParams<{ id: string }>().id` holds the matched value.
+`useParams()` gives typed access to dynamic segments. Pass either the path template or an explicit
+shape; without a type argument it returns `Record<string, string>`:
+
+```ts
+const { id } = useParams<"/pokemon/:id">();     // typed from the path template
+const { id: same } = useParams<{ id: string }>(); // explicit shape
+```
 
 ## Matching & precedence
 

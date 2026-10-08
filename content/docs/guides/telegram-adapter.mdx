@@ -17,6 +17,22 @@ if (import.meta.main) bot.start();
 The token comes from `createBot({ token })`, `bot.fetch(req, { token })`, or
 `TELEGRAM_BOT_TOKEN`, in that order.
 
+`bot.start()` fails fast: if the token is wrong or Telegram can't be reached, it rejects within about
+a second instead of retrying forever in the background.
+
+## Options
+
+```ts
+new TelegramAdapter({
+  client: { apiRoot: "http://localhost:8081" }, // local Bot API server, or a fake API in tests
+  botInfo: { id: 123, is_bot: true, first_name: "My Bot", username: "my_bot", /* … */ },
+});
+```
+
+- **`client`** — grammY's `ApiClientOptions`, passed through to the grammY `Bot`.
+- **`botInfo`** — the bot's own `getMe` info. When given, startup skips the `getMe` call. Pass it on
+  serverless, where every cold isolate would otherwise call `getMe`.
+
 ## Transports
 
 | Transport | How | Use for |
@@ -48,12 +64,13 @@ you register the URL yourself with `teact webhook set <url>`.
 ```ts
 export default {
   fetch: (request: Request, env: Env) =>
-    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
 };
 ```
 
 The response resolves only after the reply has been sent and the session saved, so nothing is lost
-when the isolate freezes. See [Deployment](/docs/guides/deployment#serverless--edge-with-botfetch)
+when the isolate freezes. A request with the wrong secret gets a `401` before the bot initializes.
+`bot.fetch()` doesn't register the command menu: run `bot.setCommands()` once after deploying. See [Deployment](/docs/guides/deployment#serverless--edge-with-botfetch)
 for the full walkthrough.
 
 ## Adapter surface

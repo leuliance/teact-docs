@@ -173,10 +173,20 @@ Scaffolds a serverless deployment. The only target today is `cloudflare` (the de
 1. Checks that your entry (`src/index.ts(x)`) does `export const bot = createBot(...)`, and warns if
    it doesn't. The generated worker imports the bot from there.
 2. Creates `src/worker.ts`, a fetch handler that calls
-   `bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET })`.
-3. Creates `wrangler.jsonc` (`main: "src/worker.ts"`, `nodejs_compat`), named after your
+   `bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env })`.
+   Passing `env` lets code at module scope read your bindings with `getEnv<Env>()` from
+   `@teactjs/core`.
+3. Adds `.dev.vars` (wrangler's local secrets file) to `.gitignore`, if it isn't listed yet.
+4. Creates `wrangler.jsonc` (`main: "src/worker.ts"`, `nodejs_compat`), named after your
    `package.json`.
-4. Prints the next steps: set secrets, deploy, register the webhook.
+5. Prints the next steps: set secrets, deploy, register the webhook, and register the command menu
+   once with `bot.setCommands()` (`bot.fetch()` doesn't call `setMyCommands`). It also reminds you
+   that sessions must be durable on Workers, e.g.
+   `session: { store: d1SessionStore(() => getEnv<Env>().DB) }`.
+
+```bash
+bun -e "import { bot } from './src/index'; await bot.setCommands()"   # once, after deploying
+```
 
 Existing `src/worker.ts` / `wrangler.jsonc` files are never overwritten. With `--run` it also runs
 `bunx wrangler deploy`.

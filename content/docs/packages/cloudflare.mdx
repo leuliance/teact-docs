@@ -31,7 +31,7 @@ auto-inserted, because `cloudflare:workers` only exists inside a Worker.
 | `d1SessionStore` | function | `d1SessionStore(db, { table?, prefix?, ttl? })` → `SessionStore`. |
 | `kvSessionStore` | function | `kvSessionStore(kv, { namespace?, prefix?, ttl? })` → `SessionStore`. |
 | `kvExpirationTtl`, `KV_MIN_TTL_SECONDS` | utils | Millisecond → KV `expirationTtl` conversion; `60`. |
-| `escapeLike`, `DEFAULT_D1_TABLE` | utils | `LIKE` escaping; `'teact_storage'`. |
+| `DEFAULT_D1_TABLE` | constant | `'teact_storage'`. |
 | `KVNamespaceLike`, `D1DatabaseLike`, `Lazy`, `KVDriverOptions`, `D1DriverOptions` | types | Structural binding types and options. |
 
 ## Bindings
@@ -45,35 +45,49 @@ auto-inserted, because `cloudflare:workers` only exists inside a Worker.
 ```
 
 Every driver and session store accepts `binding | (() => binding)`. A getter is resolved on each
-call, never at construction, so you can build the bot once at module scope with
-`import { env } from "cloudflare:workers"`:
+call, never at construction, so you can build the bot once at module scope. Pass the Worker's `env`
+to `bot.fetch(request, { env })` and read it back with `getEnv()` from `@teactjs/core`:
 
-```ts title="src/worker.ts"
-import { env } from "cloudflare:workers";
-import { createBot } from "@teactjs/core";
+```tsx title="src/index.tsx"
+import { createBot, getEnv } from "@teactjs/core";
 import { TelegramAdapter } from "@teactjs/telegram";
 import { storagePlugin } from "@teactjs/storage";
 import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+import type { Env } from "./worker";
 
-const bot = createBot({
+export const bot = createBot({
   component: App,
   adapter: new TelegramAdapter(),
-  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
-  session: { store: d1SessionStore(() => env.DB) },
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
 });
+```
+
+```ts title="src/worker.ts"
+import type { D1DatabaseLike } from "@teactjs/cloudflare";
+import { bot } from "./index";
+
+export interface Env {
+  TELEGRAM_BOT_TOKEN: string;
+  WEBHOOK_SECRET?: string;
+  DB: D1DatabaseLike; // or D1Database from @cloudflare/workers-types
+}
 
 export default {
-  fetch: (req: Request) =>
-    bot.fetch(req, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+  fetch: (req: Request, env: Env) =>
+    bot.fetch(req, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
 };
 ```
 
-If you build the bot inside the handler instead, pass the plain binding: `new D1Driver(env.DB)`.
+Unlike `import { env } from "cloudflare:workers"`, `getEnv()` keeps the module importable outside a
+Worker: the getter only runs when a driver is used, which on Workers happens inside `bot.fetch()`.
+`getEnv()` throws if it is called before any `bot.fetch(request, { env })`. If you build
+the bot inside the handler instead, pass the plain binding: `new D1Driver(env.DB)`.
 
 ## D1Driver
 
 ```ts
-new D1Driver(() => env.DB, { table: "teact_storage" /* default */ });
+new D1Driver(() => getEnv<Env>().DB, { table: "teact_storage" /* default */ });
 ```
 
 - The table `teact_storage(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)` is created
@@ -82,22 +96,24 @@ new D1Driver(() => env.DB, { table: "teact_storage" /* default */ });
 - Values are JSON text; `expires_at` is epoch milliseconds.
 - Prefix queries use `LIKE ? ESCAPE '\'` with an extra exact, case-sensitive match (SQLite's `LIKE`
   ignores ASCII case). `entries()` is a single `SELECT`.
-- TTL is exact to the millisecond. Expired rows are hidden on read; to reclaim space, call
+- `incr(key, by?, { ttl? })` is an atomic counter (one `UPSERT … RETURNING`); the `ttl` only
+  applies when the increment creates the key.
+- TTL is exact to the millisecond (`0`, a negative number or `Infinity` means "no expiry"). Expired
+  rows are hidden on read; to reclaim space, call
   `driver.purgeExpired()` from a Cron Trigger:
 
   ```ts
-  const driver = new D1Driver(() => env.DB);
-
   export default {
-    fetch: (req: Request) => bot.fetch(req),
-    scheduled: () => driver.purgeExpired(),
+    fetch: (req: Request, env: Env) => bot.fetch(req, { env /* , token, secretToken */ }),
+    // A cron run doesn't go through bot.fetch(), so use the env it receives directly.
+    scheduled: (_event: unknown, env: Env) => new D1Driver(env.DB).purgeExpired(),
   };
   ```
 
 ## KVDriver
 
 ```ts
-new KVDriver(() => env.BOT_KV, { namespace: "mybot:" /* optional key prefix */ });
+new KVDriver(() => getEnv<Env>().BOT_KV, { namespace: "mybot:" /* optional key prefix */ });
 ```
 
 - Values are JSON text.
@@ -108,6 +124,8 @@ new KVDriver(() => env.BOT_KV, { namespace: "mybot:" /* optional key prefix */ }
 - **Consistency**: KV is eventually consistent. Writes can take up to about 60s to reach other
   locations, and KV allows about one write per second per key.
 - **Cost**: each update runs a `list` plus one `get` per key in the chat.
+- **No `incr()`**: KV has no atomic primitive, so counters in `@teactjs/plugins` (rate limits,
+  analytics) can't be exact across instances on KV. Use D1 for those.
 
 <Callout type="warn">
 Avoid KV for per-message state such as counters, multi-step forms or wizards — a user whose
@@ -119,9 +137,9 @@ consecutive updates land in different locations may read a stale value. Use D1 f
 ```ts
 import { d1SessionStore, kvSessionStore } from "@teactjs/cloudflare";
 
-createBot({ session: { store: d1SessionStore(() => env.DB, { ttl: 7 * 24 * 3600_000 }) } });
+createBot({ session: { store: d1SessionStore(() => getEnv<Env>().DB, { ttl: 7 * 24 * 3600_000 }) } });
 // or (eventually consistent, ttl rounded up to ≥ 60s):
-createBot({ session: { store: kvSessionStore(() => env.SESSIONS, { prefix: "session:" }) } });
+createBot({ session: { store: kvSessionStore(() => getEnv<Env>().SESSIONS, { prefix: "session:" }) } });
 ```
 
 ## Serverless notes
@@ -134,6 +152,7 @@ createBot({ session: { store: kvSessionStore(() => env.SESSIONS, { prefix: "sess
 ## Do / Don't
 
 - **Do** use D1 for sessions and anything that changes per message.
-- **Do** use lazy getters (`() => env.DB`) when the bot is created at module scope.
+- **Do** use lazy getters (`() => getEnv<Env>().DB`) when the bot is created at module scope, and
+  pass `env` to `bot.fetch()`.
 - **Don't** rely on KV for read-after-write consistency.
 - **Don't** expect sub-minute TTLs on KV.

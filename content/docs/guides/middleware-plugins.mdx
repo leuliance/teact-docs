@@ -78,7 +78,17 @@ const myPlugin: TeactPlugin = {
 };
 ```
 
-Register in `createBot({ plugins: [myPlugin] })` or via `defineConfig` / `teact.config.ts`. To author
+Register in `createBot({ plugins: [myPlugin] })` or via `defineConfig` / `teact.config.ts`.
+
+### Plugins in both places
+
+`teact.config.ts` plugins and `createBot({ plugins })` are merged (config plugins first). If a plugin
+with the same `name` is listed in **both**, only the `createBot()` copy is used and Teact logs a
+warning — so you don't get two drivers, doubled providers or duplicate `onStart` / `onStop` calls.
+Repeating a plugin **within one list** is intentional and every copy is kept, e.g. a per-user and a
+per-chat `rateLimit`.
+
+To author
 reusable plugins with config defaults and DI services, use
 [`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk).
 

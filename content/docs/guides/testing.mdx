@@ -10,7 +10,7 @@ import { MockAdapter } from "@teactjs/testing";
 import { createBot } from "@teactjs/core";
 
 const adapter = new MockAdapter();
-const bot = createBot({ component: App, adapter, token: "test" });
+const bot = createBot({ component: App, adapter }); // no token needed
 await bot.start();
 
 // positional args: (chatId, userId, text)

@@ -48,7 +48,7 @@ Commands and UI do **not** belong here — they live in `createBot()`.
 | `webhook` | Webhook settings — overrides config |
 | `session` | `{ store?, ttl? }` |
 | `middleware` | Merged with config middleware |
-| `plugins` | Merged with config plugins |
+| `plugins` | Merged with config plugins. A plugin (same `name`) in both uses the `createBot()` copy; repeats within one list are all kept |
 | `commands` | Telegram `/command` map — routes or handlers |
 | `providers` | React context providers wrapping the tree |
 | `debug` | Verbose logging (every update, render, and error) |
@@ -75,7 +75,7 @@ const bot = createBot({
 ## Serverless / edge caveat
 
 On Cloudflare Workers, Vercel Edge, and Deno Deploy you handle updates with
-`bot.fetch(request, { token, secretToken })` instead of `bot.start()`. **The edge has no filesystem**, so:
+`bot.fetch(request, { token, secretToken, env })` instead of `bot.start()`. **The edge has no filesystem**, so:
 
 <Callout type="warn">
   `teact.config.ts` is **not** loaded on the edge (loading it needs `fs`). Anything you put there —
@@ -88,24 +88,33 @@ On Cloudflare Workers, Vercel Edge, and Deno Deploy you handle updates with
 
 ```ts
 // worker entry — config file is ignored here, so pass everything to createBot()
-import { env } from "cloudflare:workers";
-import { createBot } from "@teactjs/core";
+import { createBot, getEnv } from "@teactjs/core";
 import { TelegramAdapter } from "@teactjs/telegram";
 import { storagePlugin } from "@teactjs/storage";
 import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
 
+interface Env {
+  TELEGRAM_BOT_TOKEN: string;
+  WEBHOOK_SECRET?: string;
+  DB: D1Database;
+}
+
 const bot = createBot({
   router,
   adapter: new TelegramAdapter(),
-  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
-  session: { store: d1SessionStore(() => env.DB) },
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
 });
 
 export default {
-  fetch: (request: Request) =>
-    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
 };
 ```
+
+`getEnv()` returns the `env` passed to the most recent `bot.fetch()`, so the lazy getters can reach
+your bindings. On serverless, also run `bot.setCommands()` once after deploying to register the
+command menu.
 
 Full walkthrough (bindings, durable stores, secrets) in [Deployment](/docs/guides/deployment); for
 choosing a database see [Databases](/docs/guides/databases).

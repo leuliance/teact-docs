@@ -30,11 +30,33 @@ bun add @teactjs/plugin-sdk
 | Member | Signature | Purpose |
 | ------ | --------- | ------- |
 | `config` | `C` | Resolved config (`defaultConfig` merged under the user's config). |
-| `middleware` | `(fn: Middleware) => void` | Run on every incoming update. |
+| `middleware` | `(fn: Middleware) => void` | Run on every incoming update (call it more than once to add several steps). |
 | `addProvider` | `(Comp: FunctionComponent<{ children }>) => void` | Wrap the app tree with a React provider (providers nest in order). |
 | `provideService` | `(key: string, value: unknown) => void` | Register a DI service, read later with `useService(key)`. |
 | `onStart` | `(fn: (adapter: Adapter) => void \| Promise<void>) => void` | Run when the bot starts (after the adapter connects). |
 | `onStop` | `(fn: () => void \| Promise<void>) => void` | Run on shutdown. |
+
+### Middleware rules
+
+A plugin's middleware follows the same rules as the bot's own
+[pipeline](/docs/guides/middleware-plugins#middleware): `next()` is implied when a step returns
+without calling it, so returning early does **not** skip the plugin's remaining middleware. To stop an
+update, call [`halt(ctx)`](/docs/guides/middleware-plugins#halting-an-update) from `@teactjs/core`.
+
+```ts
+import { halt } from "@teactjs/core";
+import { definePlugin } from "@teactjs/plugin-sdk";
+
+export const adminsOnly = definePlugin<{ admins: string[] }>({
+  name: "admins-only",
+  defaultConfig: { admins: [] },
+  setup(ctx) {
+    ctx.middleware(async (update) => {
+      if (!ctx.config.admins.includes(update.userId)) halt(update);
+    });
+  },
+});
+```
 
 ## Example
 

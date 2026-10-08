@@ -46,8 +46,10 @@ and `teact add <db> --client <client>` adds one to an existing project. See the
    writes have landed before `bot.fetch()` resolves and the isolate freezes — no `waitUntil` needed.
    If a write fails, the error surfaces at the end of the update (and is logged).
 
-Because the cache is re-hydrated on every update, a value written by another instance shows up on
-the next update.
+Every update gets **its own cache**, holding only that chat's keys (plus your `preload` prefixes).
+Caches are never shared between chats, so one chat can't see, `clear()` or inherit write errors from
+another, and memory doesn't grow with the number of chats. Because the cache is re-hydrated on every
+update, a value written by another instance shows up on the next update.
 
 Sync drivers (memory, file, SQLite) skip the cache: reads and writes go straight to the backend.
 
@@ -79,6 +81,37 @@ function AllChats() {
 
 For queries that don't fit a key/value model, use the package's plugin and hook (`useRedis`,
 `usePostgres`, `useSqlite`, `useMongo`) to reach the client directly.
+
+## TTL and counters
+
+**TTL.** `set(key, value, { ttl })` takes milliseconds. Every driver follows the same rule: a `ttl` of
+`0`, a negative number or `Infinity` (or no `ttl` at all) means the entry **never expires**.
+
+**Atomic counters.** `AsyncStorageDriver` has an optional `incr(key, by?, { ttl? })` that adds `by`
+(default `1`) to a number in one atomic step and resolves the new value. A missing or expired key
+counts as `0`, and the `ttl` only applies when the increment creates the key, so a counter keeps its
+original expiry.
+
+| Driver | `incr()` |
+| ------ | -------- |
+| `RedisDriver` | ✓ (one Lua script per call, every client) |
+| `PostgresDriver` | ✓ (`UPSERT … RETURNING`) |
+| `SqliteDriver` / `D1Driver` | ✓ (`UPSERT … RETURNING`) |
+| `MongoDriver` | ✓ (`$inc`) |
+| `KVDriver` | ✗ (KV has no atomic primitive) |
+
+Use it through `useStorageBackend()` for your own counters. The `rateLimit` and `analytics` plugins
+from [`@teactjs/plugins`](/docs/packages/plugins) use it to stay exact across instances.
+
+## Closing clients
+
+Drivers and plugins **never close a client you pass in** — you own it, and other code may share it.
+Opt in when Teact should close it on `bot.stop()`:
+
+- Drivers: `closeClient: true` (`RedisDriver`, `PostgresDriver`, `MongoDriver`). `SqliteDriver`
+  closes a database it opened from `path`, and one you passed in only with `closeDb: true`.
+- Plugins: `closeOnStop: true` (`redisPlugin`, `postgresPlugin`, `mongoPlugin`). `sqlitePlugin`
+  closes a database it opened from `path`; override either way with `closeOnStop`.
 
 ## Durable sessions
 
@@ -178,22 +211,21 @@ export const bot = createBot({
 
 ### Cloudflare D1
 
-```ts title="src/worker.ts"
-import { env } from "cloudflare:workers";
+```ts title="src/index.tsx"
+import { createBot, getEnv } from "@teactjs/core";
 import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+import type { Env } from "./worker";
 
-const bot = createBot({
+export const bot = createBot({
   component: App,
   adapter: new TelegramAdapter(),
-  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
-  session: { store: d1SessionStore(() => env.DB) },
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
 });
-
-export default {
-  fetch: (req: Request) =>
-    bot.fetch(req, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
-};
 ```
+
+The worker passes its bindings with `bot.fetch(req, { token, secretToken, env })`; `getEnv()` reads
+them back. See [Deployment](/docs/guides/deployment#example-cloudflare-d1-storage-and-sessions).
 
 ## Writing your own driver
 
@@ -216,7 +248,12 @@ export class MyDriver implements AsyncStorageDriver {
   // Without it, the plugin falls back to keys(prefix) + one get() per key.
   async entries(prefix: string): Promise<Array<[string, unknown]>> { /* ... */ }
 
+  // Optional: atomic increment, if the backend has an atomic primitive.
+  // opts.ttl applies only when the increment creates the key.
+  async incr(key: string, by = 1, opts?: SetOptions): Promise<number> { /* ... */ }
+
   // Optional: release connections; storagePlugin calls it when the bot stops.
+  // Don't close a client the user passed in unless they asked you to.
   async close(): Promise<void> { /* ... */ }
 }
 ```
@@ -229,6 +266,8 @@ Guidelines:
   characters in MongoDB.
 - `clear(prefix)` must only delete keys under that prefix; other chats' data lives in the same store.
 - Implement `entries` with a single query; it runs on every update.
+- Treat a `ttl` of `0`, a negative number or `Infinity` as "no expiry".
+- Only implement `incr` if it is truly atomic; callers fall back to read-modify-write without it.
 
 A synchronous backend can implement the simpler `StorageDriver` interface instead and skip the cache
 entirely.

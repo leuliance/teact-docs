@@ -1,11 +1,11 @@
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import type { MDXComponents } from 'mdx/types';
-import { AlphaBadge } from './alpha-badge';
+import { ReleaseBadge } from './release-badge';
 
 export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,
-    AlphaBadge,
+    ReleaseBadge,
     ...components,
   } satisfies MDXComponents;
 }

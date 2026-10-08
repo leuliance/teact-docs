@@ -16,7 +16,7 @@ bun add @teactjs/telegram
 
 | Export | Kind | Description |
 | ------ | ---- | ----------- |
-| `TelegramAdapter` | class | Adapter passed to `createBot({ adapter })`. |
+| `TelegramAdapter` | class | Adapter passed to `createBot({ adapter })`. Options: `client` (grammY API client options, e.g. `apiRoot`) and `botInfo` (skip `getMe`). |
 | `serializeOutput` | function | Serialize a rendered output tree to a Telegram send payload. |
 | `conversationsPlugin` | plugin | Enables imperative async/await conversation flows. |
 | `defineConversation` | function | Declare a named conversation handler. |
@@ -41,10 +41,28 @@ const bot = createBot({
 if (import.meta.main) bot.start();
 ```
 
+`bot.start()` fetches the bot's identity (`getMe`) before polling starts, so a bad token or an
+unreachable Telegram makes it **reject within about a second** instead of leaving the process running
+silently.
+
+## Adapter options
+
+```ts
+new TelegramAdapter({
+  client: { apiRoot: "http://localhost:8081" }, // grammY ApiClientOptions
+  botInfo: { id: 123, is_bot: true, first_name: "My Bot", username: "my_bot", /* … */ },
+});
+```
+
+| Option | Description |
+| ------ | ----------- |
+| `client` | grammY's `ApiClientOptions` — e.g. `apiRoot` to use a [local Bot API server](https://github.com/tdlib/telegram-bot-api) or a fake API in tests. |
+| `botInfo` | The bot's own `getMe` result. When given, the `getMe` call on startup is skipped — worthwhile on serverless, where every cold isolate would otherwise make it. |
+
 ## Webhook / edge
 
-On serverless runtimes, call `bot.fetch(request, { token, secretToken })` from your handler instead
-of `start()`. The isolate freezes once the `Response` resolves, so pass plugins directly to
+On serverless runtimes, call `bot.fetch(request, { token, secretToken, env })` from your handler
+instead of `start()`, and run `bot.setCommands()` once after deploying. The isolate freezes once the `Response` resolves, so pass plugins directly to
 `createBot({ plugins })` (the config file is not loaded on edge) and provide a durable
 `SessionStore`.
 

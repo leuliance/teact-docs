@@ -23,7 +23,7 @@ bun add @teactjs/storage
 | `MemoryDriver` | class | In-memory sync driver (default; data is lost on restart). |
 | `FileDriver` | class | JSON-file sync driver that persists to disk. |
 | `CachedDriver`, `isAsyncDriver` | class / function | The per-update cache used for async drivers, and its type guard. |
-| `MemoryAsyncDriver` | class | In-memory `AsyncStorageDriver` (honours `ttl`) — for tests and as a reference implementation. |
+| `MemoryAsyncDriver` | class | In-memory `AsyncStorageDriver` (honours `ttl`, implements `incr`) — for tests and as a reference implementation. |
 | `runDriverConformance` | function | Shared behaviour tests for custom async drivers. |
 | `StorageDriver`, `AsyncStorageDriver`, `AnyStorageDriver`, `SetOptions` | types | Driver interfaces. |
 | `StoragePluginOptions`, `CreateSessionStoreOptions`, `DriverConformanceOptions` | types | Options. |
@@ -80,8 +80,9 @@ written directly.
 **Async drivers** (Redis, Postgres, MongoDB, KV, D1) are wrapped in a per-update cache so
 `useStorage` stays synchronous:
 
-1. Before each update, the plugin loads the current chat's keys (`<platform>:<chatId>:*`) with one
-   `entries()` call, plus every prefix in `preload`.
+1. Before each update, the plugin creates a fresh cache for that update and loads only the current
+   chat's keys (`<platform>:<chatId>:*`) with one `entries()` call, plus every prefix in `preload`.
+   Caches are never shared between chats, so one chat can't see or clear another chat's data.
 2. Components read from that cache; `set` updates it immediately and queues the write.
 3. Every queued write is awaited before the update finishes, so writes are durable even on
    serverless, where the isolate freezes after the response.
@@ -123,9 +124,21 @@ interface AsyncStorageDriver {
   keys(prefix?: string): Promise<string[]>;
   clear(prefix?: string): Promise<void>;
   entries?(prefix: string): Promise<Array<[string, unknown]>>; // one query if possible
+  incr?(key: string, by?: number, opts?: { ttl?: number }): Promise<number>; // atomic counter
   close?(): Promise<void>;                                   // called on bot stop
 }
 ```
+
+- **`ttl`** is in milliseconds. `0`, a negative number, `Infinity` or no `ttl` means the entry never
+  expires — every built-in driver follows this rule.
+- **`incr(key, by?, { ttl? })`** is optional. It atomically adds `by` (default `1`) to the number at
+  `key` (a missing or expired key counts as `0`) and resolves the new value. The `ttl` only applies
+  when the increment creates the key, so a counter keeps its original expiry. The Redis, Postgres,
+  SQLite, D1 and MongoDB drivers (and `MemoryAsyncDriver`) implement it; `KVDriver` doesn't, because
+  KV has no atomic primitive. The fixed-window `rateLimit` and `analytics` from
+  [`@teactjs/plugins`](/docs/packages/plugins) use it to stay exact across instances.
+- **`close()`** is called when the bot stops. The built-in drivers only close a client **you passed
+  in** when you opt in with `closeClient: true`; by default you own its lifecycle.
 
 The `async: true` marker is how the plugin tells the two apart. To write your own, see
 [Writing your own driver](/docs/guides/databases#writing-your-own-driver).

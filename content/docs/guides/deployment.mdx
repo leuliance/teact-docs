@@ -89,14 +89,17 @@ systemd, Docker, or any supervisor works the same way — build first, then run
 
 ## Serverless / edge with `bot.fetch()`
 
-`bot.fetch(request, { token, secretToken })` is a universal webhook handler:
+`bot.fetch(request, { token, secretToken, env })` is a universal webhook handler:
 
 - It initializes the bot **lazily, once per isolate** — no polling, no server, no
   `setMyCommands` call on every request.
 - The token is resolved **per request**, matching the Cloudflare `env` pattern. It falls back to
   `createBot({ token })` or `TELEGRAM_BOT_TOKEN`.
 - When `secretToken` is set, requests without a matching `X-Telegram-Bot-Api-Secret-Token` header
-  are rejected.
+  get a `401` **before any initialization** — no `getMe`, no plugin `onStart`. Anyone can POST to a
+  public URL, so always set it.
+- `env` takes the platform's bindings for the request (the Cloudflare Workers `env`). Code at module
+  scope reads them lazily with [`getEnv<T>()`](#reading-bindings-with-getenv).
 - The returned `Response` resolves **only after** the reply has been sent to Telegram and any
   session write has finished. That matters on the edge: once the `Response` resolves the isolate
   can freeze, and anything still pending is dropped.
@@ -109,7 +112,8 @@ systemd, Docker, or any supervisor works the same way — build first, then run
 teact deploy cloudflare
 ```
 
-It creates two files (existing ones are left untouched):
+It creates two files (existing ones are left untouched) and adds `.dev.vars` — wrangler's local
+secrets file — to `.gitignore`:
 
 ```ts title="src/worker.ts"
 // src/index.tsx exports the bot and only calls bot.start() when run directly,
@@ -119,11 +123,12 @@ import { bot } from "./index";
 export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   WEBHOOK_SECRET?: string;
+  // Add your bindings here (e.g. DB: D1Database) and read them with getEnv<Env>().
 }
 
 export default {
   fetch: (request: Request, env: Env) =>
-    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
 };
 ```
 
@@ -149,6 +154,19 @@ teact webhook set https://my-bot.<account>.workers.dev --secret <same WEBHOOK_SE
 `teact webhook set` reads `TELEGRAM_BOT_TOKEN`, and `WEBHOOK_SECRET` if you leave out `--secret`,
 from the environment or your project's `.env`. Check delivery with `teact webhook info`, which shows
 the URL, the pending update count, and Telegram's last delivery error.
+
+### Register the command menu
+
+`bot.start()` registers your commands with Telegram (`setMyCommands`) on startup. `bot.fetch()`
+doesn't, so a cold start never pays for that call. Run `bot.setCommands()` once after deploying, and
+again whenever your commands change. It resolves the number of commands registered:
+
+```bash
+bun -e "import { bot } from './src/index'; await bot.setCommands()"
+```
+
+It uses the same token resolution as the bot (`createBot({ token })` or `TELEGRAM_BOT_TOKEN`, which
+Bun loads from `.env`).
 
 <Callout type="info">
   If `teact deploy` warns that your entry doesn't `export const bot`, add the export and the
@@ -188,7 +206,13 @@ with `bun dev`:
 - **`teact.config.ts` is not loaded.** Pass plugins and the session store straight to `createBot`
   (see the example below).
 - **Use a durable session store.** The default in-memory store is per isolate, so sessions don't
-  persist between requests. Teact logs a one-time warning when `bot.fetch()` runs with it.
+  persist between requests. Teact logs a one-time warning when `bot.fetch()` runs with it. On
+  Workers, use `d1SessionStore(() => getEnv<Env>().DB)` (see the example below).
+- **Prefer route buttons and session state.** `onClick` handlers live in the memory of the process
+  that rendered the message. When a button press lands on a fresh isolate, Teact re-renders that
+  screen in place from its initial state and logs a warning that the handler is gone. Buttons with a
+  `route` (`<Button route="/settings" />`) work on any instance, and screen state kept in
+  `useSession` / `useStorage` survives the switch.
 - **Use a durable storage driver.** The `'file'` driver warns and falls back to memory when there is
   no filesystem. Use an edge-capable database package: D1 or KV via
   [`@teactjs/cloudflare`](/docs/packages/cloudflare), Upstash via [`@teactjs/redis`](/docs/packages/redis),
@@ -198,8 +222,11 @@ with `bun dev`:
   [conversations](/docs/guides/conversations), and timers that fire after the reply need a
   long-running process. Storage and session writes are fine: they are awaited before `bot.fetch()`
   resolves.
-- **`.env` isn't read.** Configure secrets on the platform and pass the token through
+- **`.env` isn't read.** Configure secrets on the platform (`wrangler secret put`, or `.dev.vars` for
+  `wrangler dev`, which `teact deploy` keeps out of git) and pass the token through
   `bot.fetch(req, { token })`.
+- **Register commands yourself.** Run [`bot.setCommands()`](#register-the-command-menu) once after
+  deploying.
 
 ### Example: Cloudflare D1 storage and sessions
 
@@ -213,33 +240,43 @@ and KV (eventually consistent). Bind a D1 database as `DB` in `wrangler.jsonc`:
 }
 ```
 
-Lazy getters (`() => env.DB`) let you create the bot once at module scope, in the module your worker
-imports:
+### Reading bindings with `getEnv`
 
-```tsx
-import { env } from "cloudflare:workers";
-import { createBot } from "@teactjs/core";
+Pass `env` to `bot.fetch()` (the generated worker does) and read it anywhere with `getEnv<T>()` from
+`@teactjs/core`. Drivers and session stores accept a **lazy getter**, so you can create the bot once
+at module scope and the binding is only read while a request is being handled:
+
+```tsx title="src/index.tsx"
+import { createBot, getEnv } from "@teactjs/core";
 import { TelegramAdapter } from "@teactjs/telegram";
 import { storagePlugin } from "@teactjs/storage";
 import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+import type { Env } from "./worker";
 
 export const bot = createBot({
   router,
   adapter: new TelegramAdapter(),
-  plugins: [storagePlugin({ driver: new D1Driver(() => env.DB) })],
-  session: { store: d1SessionStore(() => env.DB) },
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
 });
+
+if (import.meta.main) bot.start();
 ```
 
+Add `DB: D1Database` to the `Env` interface in `src/worker.ts`. `getEnv()` returns the `env` from the
+most recent `bot.fetch()` call and throws if none has been passed yet. Unlike importing
+`cloudflare:workers`, the module still loads outside a Worker: the getter only runs when the driver
+or store is used during a request.
+
 The table is created on first use. For KV, bind a namespace (`"kv_namespaces"`) and use
-`new KVDriver(() => env.BOT_KV)` / `kvSessionStore(() => env.BOT_KV)` — but avoid KV for state that
-changes on every message (multi-step forms, counters): it is eventually consistent and its TTLs have
-a 60-second minimum.
+`new KVDriver(() => getEnv<Env>().BOT_KV)` / `kvSessionStore(() => getEnv<Env>().BOT_KV)` — but
+avoid KV for state that changes on every message (multi-step forms, counters): it is eventually
+consistent, its TTLs have a 60-second minimum, and it has no atomic `incr()`.
 
 <Callout type="info">
-  `cloudflare:workers` only exists inside a Worker. If the same entry also runs under `bun dev`, keep
-  the Workers-only wiring in the module your worker imports, or build the bot inside the `fetch`
-  handler and pass the plain bindings (`new D1Driver(env.DB)`).
+  Under `bun dev` the same entry runs with polling, where `getEnv()` has nothing to return. If you
+  want one entry for both, pick the driver by environment, or build the bot inside the worker's
+  `fetch` handler and pass the plain bindings (`new D1Driver(env.DB)`).
 </Callout>
 
 ### Other edge databases
@@ -264,6 +301,9 @@ bun dev
   for both modes.
 - **Do** set a `WEBHOOK_SECRET` and pass it as `secretToken`, so only Telegram can call your
   endpoint.
+- **Do** run `bot.setCommands()` once after each deploy that changes your commands.
+- **Do** use route buttons and `useSession` / `useStorage` for state that must survive across
+  serverless instances.
 - **Do** pass `plugins` and `session.store` to `createBot()` for edge deploys, using an edge-capable
   database package.
 - **Don't** run more than one polling instance per token.

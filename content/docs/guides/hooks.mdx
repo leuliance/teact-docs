@@ -21,7 +21,7 @@ import { useState } from "@teactjs/core";
 | Hook | Purpose |
 | ---- | ------- |
 | `useNavigate()` | `(path, opts?) => void` — modes: `push`, `replace`, `stack`, `dismiss` |
-| `useParams<T>()` | Typed dynamic route params |
+| `useParams()` | Typed dynamic route params — `useParams<"/pokemon/:id">()` or `useParams<{ id: string }>()` |
 | `useRoute()` | Current `{ path, params }` |
 
 See [Router](/docs/guides/router).
