@@ -41,6 +41,10 @@ Each `CommandDef` has a `description` plus one of:
 
 The adapter registers these with Telegram so they appear in the command menu.
 
+Commands with a `handler` run through the full middleware pipeline: the handler takes the place of
+the render step, so plugins such as rate limits, maintenance mode and loggers apply to them, and
+`halt(ctx)` stops them. See [Middleware & plugins](/docs/guides/middleware-plugins#pipeline-order).
+
 ## Deep links
 
 Telegram deep links look like `https://t.me/YourBot?start=<payload>`. Handle the

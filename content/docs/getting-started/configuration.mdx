@@ -48,7 +48,7 @@ Commands and UI do **not** belong here — they live in `createBot()`.
 | `webhook` | Webhook settings — overrides config |
 | `session` | `{ store?, ttl? }` |
 | `middleware` | Merged with config middleware |
-| `plugins` | Merged with config plugins |
+| `plugins` | Merged with config plugins. A plugin (same `name`) in both uses the `createBot()` copy; repeats within one list are all kept |
 | `commands` | Telegram `/command` map — routes or handlers |
 | `providers` | React context providers wrapping the tree |
 | `debug` | Verbose logging (every update, render, and error) |
@@ -75,7 +75,7 @@ const bot = createBot({
 ## Serverless / edge caveat
 
 On Cloudflare Workers, Vercel Edge, and Deno Deploy you handle updates with
-`bot.fetch(request, { token, secretToken })` instead of `bot.start()`. **The edge has no filesystem**, so:
+`bot.fetch(request, { token, secretToken, env })` instead of `bot.start()`. **The edge has no filesystem**, so:
 
 <Callout type="warn">
   `teact.config.ts` is **not** loaded on the edge (loading it needs `fs`). Anything you put there —
@@ -83,29 +83,41 @@ On Cloudflare Workers, Vercel Edge, and Deno Deploy you handle updates with
 </Callout>
 
 - **Plugins:** move them out of `teact.config.ts` and into `createBot({ plugins: [...] })`.
-- **Session:** the default in-memory session store does **not** persist across the edge freeze. Provide a durable `SessionStore` backed by KV, Redis, or a database via `createBot({ session: { store } })`.
-- **Storage:** the `'file'` driver can't write on the edge (it warns and degrades to memory). Use a custom async-backed `StorageDriver`.
+- **Session:** the default in-memory session store does **not** persist across the edge freeze. Use a durable session store from a database package — `d1SessionStore` / `kvSessionStore` ([`@teactjs/cloudflare`](/docs/packages/cloudflare)), `redisSessionStore` with Upstash ([`@teactjs/redis`](/docs/packages/redis)), or `postgresSessionStore` with Neon ([`@teactjs/postgres`](/docs/packages/postgres)).
+- **Storage:** the `'file'` driver can't write on the edge (it warns and degrades to memory). Pass the matching driver (`D1Driver`, `KVDriver`, `RedisDriver`, `PostgresDriver`) to `storagePlugin`.
 
 ```ts
 // worker entry — config file is ignored here, so pass everything to createBot()
-import { createBot } from "@teactjs/core";
+import { createBot, getEnv } from "@teactjs/core";
 import { TelegramAdapter } from "@teactjs/telegram";
 import { storagePlugin } from "@teactjs/storage";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+
+interface Env {
+  TELEGRAM_BOT_TOKEN: string;
+  WEBHOOK_SECRET?: string;
+  DB: D1Database;
+}
 
 const bot = createBot({
   router,
   adapter: new TelegramAdapter(),
-  plugins: [storagePlugin({ driver: kvDriver })],
-  session: { store: kvSessionStore },
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
 });
 
 export default {
   fetch: (request: Request, env: Env) =>
-    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET }),
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
 };
 ```
 
-Full walkthrough (KV bindings, durable stores, secrets) in [Deployment](/docs/guides/deployment).
+`getEnv()` returns the `env` passed to the most recent `bot.fetch()`, so the lazy getters can reach
+your bindings. On serverless, also run `bot.setCommands()` once after deploying to register the
+command menu.
+
+Full walkthrough (bindings, durable stores, secrets) in [Deployment](/docs/guides/deployment); for
+choosing a database see [Databases](/docs/guides/databases).
 
 ## Environment variables
 
@@ -119,5 +131,5 @@ On Bun/Node, a root `.env` is auto-loaded. On the edge, set these as platform se
 
 - **Do** keep `mode`, `webhook`, `session`, `plugins`, and `middleware` in `teact.config.ts` for polling and long-running servers.
 - **Do** move `plugins` and a durable `session.store` into `createBot()` for edge deployments — the config file never runs there.
-- **Don't** rely on the in-memory session store or the `'file'` storage driver on the edge; they don't survive the freeze.
+- **Don't** rely on the in-memory session store or the `'file'` storage driver on the edge; they don't survive the freeze. Use an edge-capable database package instead.
 - **Don't** put `commands` or your `component`/`router` in `teact.config.ts` — they belong in `createBot()`.

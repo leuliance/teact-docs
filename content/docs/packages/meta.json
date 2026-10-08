@@ -8,6 +8,13 @@
     "telegram",
     "plugin-sdk",
     "storage",
+    "redis",
+    "postgres",
+    "sqlite",
+    "mongodb",
+    "cloudflare",
+    "i18n",
+    "plugins",
     "testing",
     "cli",
     "create-teact"

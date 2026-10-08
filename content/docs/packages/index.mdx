@@ -13,9 +13,16 @@ components. Everything else is optional and layers on top.
 | [@teactjs/ui](/docs/packages/ui) | `bun add @teactjs/ui` | Components: `Message`, keyboards, media, formatting |
 | [@teactjs/telegram](/docs/packages/telegram) | `bun add @teactjs/telegram` | Production Telegram transport (grammY driver) |
 | [@teactjs/plugin-sdk](/docs/packages/plugin-sdk) | `bun add @teactjs/plugin-sdk` | Authoring your own plugins with `definePlugin` |
-| [@teactjs/storage](/docs/packages/storage) | `bun add @teactjs/storage` | Memory / file / custom key-value persistence |
+| [@teactjs/storage](/docs/packages/storage) | `bun add @teactjs/storage` | `useStorage`, memory / file drivers, async driver interface, `createSessionStore` |
+| [@teactjs/redis](/docs/packages/redis) | `bun add @teactjs/redis` | Redis storage + sessions (ioredis, node-redis, Bun, Upstash) |
+| [@teactjs/postgres](/docs/packages/postgres) | `bun add @teactjs/postgres` | Postgres storage + sessions (pg, postgres.js, Neon, PGlite) |
+| [@teactjs/sqlite](/docs/packages/sqlite) | `bun add @teactjs/sqlite` | SQLite storage + sessions (`bun:sqlite`, better-sqlite3) |
+| [@teactjs/mongodb](/docs/packages/mongodb) | `bun add @teactjs/mongodb` | MongoDB storage + sessions |
+| [@teactjs/cloudflare](/docs/packages/cloudflare) | `bun add @teactjs/cloudflare` | Workers D1 / KV storage + sessions |
+| [@teactjs/i18n](/docs/packages/i18n) | `bun add @teactjs/i18n` | `i18nPlugin`, built-in UI strings, `LanguagePicker`, `useFormat` |
+| [@teactjs/plugins](/docs/packages/plugins) | `bun add @teactjs/plugins` | Rate limiting, logging, maintenance, filters, error reporting, analytics, flags, broadcasts |
 | [@teactjs/testing](/docs/packages/testing) | `bun add -D @teactjs/testing` | Unit-testing bots without hitting Telegram |
-| [@teactjs/cli](/docs/packages/cli) | `bun add -D @teactjs/cli` | Local `teact` commands (dev, build, deploy, …) |
+| [@teactjs/cli](/docs/packages/cli) | `bun add -D @teactjs/cli` | Local `teact` commands (dev, build, add, deploy, doctor, …) |
 | [create-teact](/docs/packages/create-teact) | `bun create teact` | Scaffolding a new project |
 
 <Callout type="info">

@@ -1,42 +1,105 @@
 ---
 title: Telegram adapter
-description: TelegramAdapter on grammY — polling, webhooks, adapter methods, and optional plugins.
+description: TelegramAdapter on grammY — polling, webhook server, serverless webhooks via bot.fetch(), adapter methods, and optional plugins.
 ---
 
 ## Basic usage
 
 ```ts
+import { createBot } from "@teactjs/core";
 import { TelegramAdapter } from "@teactjs/telegram";
 
-new TelegramAdapter();
+export const bot = createBot({ router, adapter: new TelegramAdapter() });
+
+if (import.meta.main) bot.start();
 ```
 
-Pass to `createBot` with `token` and `mode: "polling"` | `"webhook"`.
+The token comes from `createBot({ token })`, `bot.fetch(req, { token })`, or
+`TELEGRAM_BOT_TOKEN`, in that order.
 
-## Webhook
+`bot.start()` fails fast: if the token is wrong or Telegram can't be reached, it rejects within about
+a second instead of retrying forever in the background.
+
+## Options
+
+```ts
+new TelegramAdapter({
+  client: { apiRoot: "http://localhost:8081" }, // local Bot API server, or a fake API in tests
+  botInfo: { id: 123, is_bot: true, first_name: "My Bot", username: "my_bot", /* … */ },
+});
+```
+
+- **`client`** — grammY's `ApiClientOptions`, passed through to the grammY `Bot`.
+- **`botInfo`** — the bot's own `getMe` info. When given, startup skips the `getMe` call. Pass it on
+  serverless, where every cold isolate would otherwise call `getMe`.
+
+## Transports
+
+| Transport | How | Use for |
+| --------- | --- | ------- |
+| Polling (default) | `bot.start()` | Local dev, VPS, containers |
+| Webhook server | `mode: "webhook"` + `bot.start()` | Long-running servers with a public HTTPS URL |
+| Serverless webhook | `bot.fetch(request)` | Cloudflare Workers, Vercel/Deno Edge, `Bun.serve`, Node |
+
+### Webhook server
+
+Teact starts an HTTP server and registers the webhook with Telegram:
 
 ```ts
 mode: "webhook",
 webhook: {
   domain: "https://example.com",
-  port: 3000,
-  path: "/webhook",
-  secretToken: "optional-secret",
+  port: 3000,          // default 3000
+  path: "/webhook",    // default /webhook
+  secretToken: process.env.WEBHOOK_SECRET,
 },
 ```
+
+### Serverless webhook
+
+`bot.fetch()` handles one update per request through `adapter.webhookCallback()`, a web-standard
+`(Request) => Promise<Response>` built on grammY's `std/http` adapter. You don't start a server;
+you register the URL yourself with `teact webhook set <url>`.
+
+```ts
+export default {
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
+};
+```
+
+The response resolves only after the reply has been sent and the session saved, so nothing is lost
+when the isolate freezes. A request with the wrong secret gets a `401` before the bot initializes.
+`bot.fetch()` doesn't register the command menu: run `bot.setCommands()` once after deploying. See [Deployment](/docs/guides/deployment#serverless--edge-with-botfetch)
+for the full walkthrough.
 
 ## Adapter surface
 
 | Method | Role |
 | ------ | ---- |
 | `connect({ token })` | Init grammY bot |
-| `listen({ polling?, webhook? })` | Start transport |
+| `listen({ polling?, webhook? })` | Start transport (polling or webhook server) |
+| `webhookCallback({ secretToken? })` | Web-standard `(Request) => Response` handler, used by `bot.fetch()` |
 | `send` / `edit` | Output tree → Telegram messages |
 | `clearButtons` | Remove inline keyboard |
 | `setCommands` | Menu commands |
 | `use` | grammY middleware |
 | `disconnect` | Stop |
 | `getBot` | Raw grammY `Bot` |
+
+## Output guarantees
+
+The adapter cleans up output before sending, so common mistakes don't turn into Bot API errors:
+
+- **HTML escaping.** In HTML mode, user content is escaped, which prevents injection and
+  `can't parse entities` 400s. Text you mark with your own `parseMode` is sent as written.
+- **Length clamping.** Message text is capped at 4096 characters and captions at 1024.
+- **Media groups** are clamped to 2–10 items. A single-item group is sent as a normal media
+  message.
+- **Edit vs. send.** Text is never edited onto a media message. The adapter sends a new message
+  instead.
+- **Callback spinners always stop.** `<Notification>` is delivered through
+  `answerCallbackQuery`, and button presses without one are still answered.
 
 ## Plugins (package)
 

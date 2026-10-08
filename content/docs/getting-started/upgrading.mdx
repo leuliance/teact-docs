@@ -1,0 +1,95 @@
+---
+title: Upgrading from the alpha
+description: Move a bot built on the 0.2.0 alpha releases to Teact 1.0 — package versions, breaking changes, and recommended updates.
+---
+
+Teact 1.0 is the first stable release. Most bots built on the 0.2.0 alphas upgrade by bumping the
+packages; the changes below only affect you if you rely on the behavior they describe.
+
+## Update the packages
+
+All `@teactjs/*` packages are released together with the same version. Install them without the
+`@alpha` tag so they resolve to 1.0:
+
+```bash
+bun add @teactjs/core @teactjs/ui @teactjs/telegram
+# plus any others you use, e.g.:
+bun add @teactjs/storage @teactjs/redis @teactjs/plugins
+bun add -d @teactjs/cli @teactjs/testing
+```
+
+Keep every `@teactjs/*` package on the same version. `teact doctor` warns when they differ.
+
+## Breaking changes
+
+### The default error screen no longer shows the error message
+
+When a render throws, the built-in error screen now shows a generic "Something went wrong" message
+instead of the error text, which could contain internals such as SQL, paths or tokens. The error is
+still logged. To show your own screen, wrap your components in an `ErrorBoundary` with a `fallback`:
+
+```tsx
+import { ErrorBoundary } from "@teactjs/core";
+
+<ErrorBoundary fallback={(error, retry) => <Message text="Something broke. Try /start." />}>
+  <App />
+</ErrorBoundary>
+```
+
+### Clients you pass in are no longer closed
+
+`redisPlugin`, `mongoPlugin` and `RedisDriver` no longer close a client you pass in when the bot
+stops. If you relied on that, opt in:
+
+```ts
+redisPlugin({ client: redis, closeOnStop: true });
+mongoPlugin({ client, dbName: "mybot", closeOnStop: true });
+new RedisDriver({ client: redis, closeClient: true });
+```
+
+### A `ttl` of `0`, a negative number or `Infinity` means "no expiry"
+
+Every storage driver now treats these values as "never expires". Previously some drivers expired the
+entry immediately or threw. If you used `ttl: 0` to write a value that disappears at once, call
+`delete(key)` instead.
+
+### `escapeLike` is no longer exported
+
+`@teactjs/postgres`, `@teactjs/sqlite` and `@teactjs/cloudflare` no longer export `escapeLike`. If you
+built your own `LIKE` queries with it, copy a small helper into your project.
+
+### Plugins listed in both `teact.config.ts` and `createBot()`
+
+A plugin (same `name`) listed in both `teact.config.ts` and `createBot({ plugins })` now runs once,
+using the `createBot()` copy, and Teact logs a warning. Repeating a plugin **within one list** keeps
+every copy, so layered limits work:
+
+```ts
+plugins: [
+  rateLimit({ key: "user", window: 1000, limit: 3 }),
+  rateLimit({ key: "chat", window: 60_000, limit: 60 }),
+],
+```
+
+### Analytics counters start fresh
+
+`analytics().getStats()` now reads per-name counters. Counts recorded by the alphas aren't migrated,
+so totals start from zero after the upgrade.
+
+## Recommended updates
+
+These aren't required, but most serverless bots benefit from them:
+
+- **Pass `env` to `bot.fetch()`** and read bindings with `getEnv<Env>()` from `@teactjs/core`, e.g.
+  `new D1Driver(() => getEnv<Env>().DB)`, instead of importing `cloudflare:workers`. See
+  [Deployment](/docs/guides/deployment#reading-bindings-with-getenv).
+- **Register the command menu** with `bot.setCommands()` once after deploying; `bot.fetch()` never
+  does it. See [Register the command menu](/docs/guides/deployment#register-the-command-menu).
+- **Use route buttons and session state on serverless.** A button press that lands on a fresh
+  instance re-renders the screen in place and logs a warning when its `onClick` handler is gone.
+- **Use `strategy: "fixed"` with a shared driver** for `rateLimit` when you run several instances,
+  so the limit holds across all of them. See [`@teactjs/plugins`](/docs/packages/plugins).
+- **Drop the dummy token in tests.** `MockAdapter` no longer needs one, so
+  `createBot({ component: App, adapter: new MockAdapter() })` just works.
+- **Pass `botInfo` to `TelegramAdapter`** on serverless to skip the `getMe` call on every cold start.
+  See [`@teactjs/telegram`](/docs/packages/telegram#adapter-options).

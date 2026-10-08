@@ -35,12 +35,14 @@ these directly; they are the contract adapters and plugins build against.
 
 ### Bot
 
-`createBot`, `ROUTE_PREFIX`. Types: `CreateBotOptions`, `CommandContext`, `CommandDef`,
-`ReplyOptions`, `ReplyButton`, `ReplyKeyboardButton`, `WebhookConfig`.
+`createBot`, `getEnv`, `ROUTE_PREFIX`. Types: `CreateBotOptions`, `BotFetchOptions`,
+`CommandContext`, `CommandDef`, `ReplyOptions`, `ReplyButton`, `ReplyKeyboardButton`,
+`WebhookConfig`. See [The bot instance](#the-bot-instance).
 
 ### Session & middleware
 
-`MemorySessionStore`, `compose`, `commandMiddleware`.
+`MemorySessionStore`, `compose`, `commandMiddleware`, `halt`, `isHalted`. See
+[Middleware & plugins](/docs/guides/middleware-plugins#halting-an-update).
 
 ### Router
 
@@ -90,7 +92,9 @@ these directly; they are the contract adapters and plugins build against.
 
 ### i18n
 
-`createI18n`, `useLocale`; type `I18nConfig`.
+`createI18n`, `useLocale`, `detectLocale`, `normalizeLocale`, `getUserLanguageCode`,
+`localeCallbackData`, `LOCALE_SESSION_KEY`, `LOCALE_CALLBACK_PREFIX`; types `I18nConfig`,
+`I18nInstance`, `I18nLocaleResource`. See the [i18n guide](/docs/guides/i18n).
 
 ### Payments
 
@@ -124,3 +128,90 @@ if (import.meta.main) bot.start();
 ```
 
 See the [Router guide](/docs/guides/router) and [Hooks reference](/docs/guides/hooks) for details.
+
+## The bot instance
+
+`createBot(options)` returns a bot with these methods:
+
+| Method | What it does |
+| ------ | ------------ |
+| `bot.start()` | Starts long polling (or the webhook server), registers the command menu, and handles SIGINT/SIGTERM. |
+| `bot.stop()` | Unmounts every chat and runs the plugins' `onStop` hooks. |
+| `bot.fetch(request, { token?, secretToken?, env? })` | Serverless/edge webhook handler: `Request → Response`. Initializes the bot lazily, once per isolate. |
+| `bot.setCommands()` | Registers the command menu (Telegram `setMyCommands`) and resolves the number of commands. |
+
+### `bot.fetch()` options
+
+| Option | Description |
+| ------ | ----------- |
+| `token` | Bot token for this request (e.g. `env.TELEGRAM_BOT_TOKEN`). Falls back to `createBot({ token })` or `TELEGRAM_BOT_TOKEN`. |
+| `secretToken` | Webhook secret. A request whose `X-Telegram-Bot-Api-Secret-Token` header doesn't match gets a `401` **before any initialization** (no `getMe`, no plugin `onStart`). |
+| `env` | The platform's bindings for this request (the Cloudflare Workers `env`). Read them anywhere with `getEnv()`. |
+
+`bot.fetch()` doesn't register the command menu, so cold starts stay cheap. Call `bot.setCommands()`
+once after deploying — see [Deployment](/docs/guides/deployment#register-the-command-menu).
+
+### `getEnv<T>()`
+
+Returns the `env` passed to the most recent `bot.fetch(request, { env })`, and throws if none has
+been passed yet. Database drivers and session stores accept lazy getters, so a bot created at module
+scope can reach Workers bindings without importing `cloudflare:workers`:
+
+```ts
+import { createBot, getEnv } from "@teactjs/core";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+
+export const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
+});
+```
+
+### Tokens
+
+The token comes from `createBot({ token })`, `bot.fetch(req, { token })` or `TELEGRAM_BOT_TOKEN`.
+Adapters that don't talk to a real platform can opt out of needing one: `MockAdapter` from
+[`@teactjs/testing`](/docs/packages/testing) does, so tests can call `createBot()` without a token.
+
+## Behavior notes
+
+### Plugins from `teact.config.ts` and `createBot()`
+
+Plugins from `teact.config.ts` and `createBot({ plugins })` are merged. If a plugin with the same
+`name` appears in **both**, only the `createBot()` copy is used (with a warning), so you don't get two
+driver instances or duplicated `onStart`/`onStop`. Repeating a plugin **within one list** is
+intentional and every copy is kept — for example a per-user and a per-chat `rateLimit`.
+
+### Default error screen
+
+Every chat's screen is wrapped in an `ErrorBoundary`. When a render throws, Teact logs the error and
+shows a generic "Something went wrong" message; the next update rebuilds the screen. The error
+message itself is **not** shown to users, since it can carry internals such as SQL, paths or tokens.
+To customize the screen, wrap your components in your own `ErrorBoundary` with a `fallback` (a node,
+or `(error, retry) => node`):
+
+```tsx
+<ErrorBoundary fallback={(error, retry) => <Message text="Oops — try again." />}>
+  <Profile />
+</ErrorBoundary>
+```
+
+### Button presses on a new process
+
+`onClick` handlers live in the memory of the process that rendered the message. If a press arrives
+after a restart, or on a fresh serverless isolate, Teact re-renders that screen **in place** (it edits
+the message rather than sending a new one) from its initial state, and logs a warning that the handler
+is gone. Route buttons (`<Button route="/settings" />`) work on any instance; on serverless, prefer
+them and keep screen state in `useSession` / `useStorage` so buttons keep working across instances.
+
+### Typed `useParams`
+
+`useParams` takes either the path template or an explicit shape. Without a type argument it returns
+`Record<string, string>`:
+
+```ts
+const { id } = useParams<"/pokemon/:id">();          // typed from the path template
+const { tid, mid } = useParams<{ tid: string; mid: string }>();
+```

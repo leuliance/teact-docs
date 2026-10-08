@@ -14,7 +14,8 @@ bun create teact my-bot
 ```
 
 Run it with no flags for the interactive picker, or pass flags to the underlying
-[`teact create`](/docs/packages/cli): `-t/--template`, `-f/--features`, `--pm`, `--no-install`.
+[`teact create`](/docs/packages/cli): `-t/--template`, `-f/--features`, `--db`, `--pm`,
+`--no-install`.
 
 ## Templates
 
@@ -36,6 +37,20 @@ Selected in the picker (comma-separated with `-f`):
 | `streaming` | `streamPlugin` + live text via `useStream` |
 | `auth` | `useAuthSession` + route guards |
 | `payments` | Telegram invoices via `useInvoice` |
+
+## Storage backend
+
+When you pick `storage`, the scaffolder asks which backend to use (`--db` with `teact create`):
+
+| Backend | Wires |
+| ------- | ----- |
+| `file` (default) | `storagePlugin({ driver: "file", path: ".teact/storage.json" })` — zero setup |
+| `memory` | `storagePlugin({ driver: "memory" })` — lost on restart; good for tests |
+| `sqlite` | `SqliteDriver` from [`@teactjs/sqlite`](/docs/packages/sqlite) (`bun:sqlite`, no server) |
+| `redis` | `RedisDriver` from [`@teactjs/redis`](/docs/packages/redis) + ioredis; adds `REDIS_URL` to `.env` |
+| `postgres` | `PostgresDriver` from [`@teactjs/postgres`](/docs/packages/postgres) + postgres.js; adds `DATABASE_URL` |
+
+See the [Databases guide](/docs/guides/databases) for choosing one, and `teact add` to switch later.
 
 <Callout type="info">
 `i18n` is a built-in feature — it is always merged into the scaffold and is not shown in the picker.
