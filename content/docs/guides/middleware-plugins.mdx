@@ -1,51 +1,536 @@
 ---
 title: Middleware & plugins
-description: Global middleware on createBot and TeactPlugin for lifecycle, context, and providers.
+description: The update pipeline, middleware with halt(), the TeactPlugin interface, authoring plugins with definePlugin, and the ready-made plugins in @teactjs/plugins.
 ---
 
-## Middleware
+Every update a bot receives goes through one pipeline: plugin middleware, your middleware, then a
+final step that renders the screen or runs a command handler. **Middleware** is a function that runs
+on every update; use it for logging, access control and counting. A **plugin** bundles middleware
+with lifecycle hooks, a React provider and services, so one entry in `plugins` can add a whole
+feature.
 
-Runs on every update before rendering. If you omit calling `next`, the runtime can still proceed — simple loggers work without manual `next`.
+## First example
 
-```ts
-import type { Middleware } from "@teactjs/core";
+```ts title="src/index.tsx"
+import { createBot, halt, type Middleware } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { logger, rateLimit } from "@teactjs/plugins";
+import { App } from "./App";
 
-const logger: Middleware = async (ctx) => {
-  console.log(ctx.chatId, ctx.text);
-};
-
-const bot = createBot({
-  middleware: [logger],
-  // ...
-});
-```
-
-Explicit `next()` when you need code after the chain:
-
-```ts
-const timer: Middleware = async (ctx, next) => {
-  const t = Date.now();
+// Time every update
+const timing: Middleware = async (ctx, next) => {
+  const start = Date.now();
   await next();
-  console.log(Date.now() - t, "ms");
+  console.log(`chat ${ctx.chatId}: ${Date.now() - start} ms`);
+};
+
+// Ignore other bots
+const noBots: Middleware = async (ctx) => {
+  if (ctx.user.isBot) halt(ctx);
+};
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [logger(), rateLimit({ window: 2000, limit: 3, onLimited: "⏳ Slow down!" })],
+  middleware: [timing, noBots],
+});
+
+if (import.meta.main) bot.start();
+```
+
+## The pipeline
+
+For each update, the runtime does the following, in order:
+
+| # | Step | Notes |
+| - | ---- | ----- |
+| 0 | Queue per chat | Updates of one chat run one after another; different chats run concurrently. |
+| 1 | Classify | A route button (`__route:` data) or a known `/command` is noted; the chat's screen is reset later, in step 5. |
+| 2 | Plugin middleware from `teact.config.ts` | In `plugins` order. |
+| 3 | Plugin middleware from `createBot({ plugins })` | In `plugins` order. |
+| 4 | `middleware` from `teact.config.ts`, then from `createBot({ middleware })` | Your own functions. |
+| 5 | Final step | Reset the screen if a command or route button started this update, then **render** the component or route, **or** run the command's `handler`. |
+
+Code after `await next()` runs on the way back, in reverse order, once everything after it has
+finished, including the render and the send. That is how `logger` measures the whole update and how
+`storagePlugin` flushes writes at the end.
+
+A halted update stops where it was halted: later middleware and the final step don't run, and the
+chat's current screen and button handlers stay as they were.
+
+Errors thrown by middleware or a command handler propagate back through earlier middleware (where
+`errorReporter` can catch them) and are then logged with `[teact] Error handling update`. Errors
+thrown while rendering a component are caught by an error boundary and never reach middleware.
+
+## Writing middleware
+
+```ts
+type Middleware = (ctx: BotContext, next: () => Promise<void>) => Promise<void>;
+```
+
+If a middleware returns without calling `next`, the runtime calls it for you, so a simple logger
+doesn't need `next` at all. Call `await next()` yourself when you need code to run after the rest of
+the pipeline. Calling `next()` twice throws `next() called multiple times`.
+
+`ctx` is the platform-neutral `BotContext`:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `chatId` | `string` | Chat the update belongs to. |
+| `userId` | `string` | Sender's id. |
+| `user` | `User` | `{ id, username?, firstName?, lastName?, isBot?, languageCode?, platform }`. |
+| `platform` | `string` | `"telegram"` (or `"mock"` in tests). |
+| `messageId` | `string?` | Incoming message id, or the message a button was pressed on. |
+| `text` | `string?` | Message text. Unset for button presses. |
+| `callbackData` | `string?` | Button data. Unset for messages. |
+| `botUsername` | `string?` | The bot's own username. |
+| `raw` | `any` | The platform's native context (the grammY `Context` on Telegram). |
+
+Register middleware in `createBot({ middleware: [...] })` or in `teact.config.ts`; both lists run,
+config first.
+
+### Halting an update
+
+Because `next()` is called automatically, *not* calling it can't block an update. Call
+`halt(ctx)` instead: once the current middleware returns, no further middleware runs and nothing is
+rendered.
+
+```ts
+import { halt, isHalted, type Middleware } from "@teactjs/core";
+
+const ADMINS = ["123456789"];
+
+const adminsOnly: Middleware = async (ctx) => {
+  if (!ADMINS.includes(ctx.userId)) halt(ctx);
+};
+
+const audit: Middleware = async (ctx, next) => {
+  await next();
+  if (isHalted(ctx)) console.log(`blocked update from ${ctx.userId}`);
 };
 ```
 
-## TeactPlugin
+`isHalted(ctx)` tells you whether an update was halted. Calling `next()` explicitly after
+`halt(ctx)` still continues the chain, so halt and return.
+
+### Command handlers are the final step
+
+Commands defined with a `handler` (`commands: { ping: { description: "Ping", handler: "pong" } }`)
+replace the render step; they don't bypass the pipeline. Rate limits, maintenance mode, logging and
+error reporting apply to them too, and a halted update never reaches the handler. See
+[Commands](/docs/guides/commands).
+
+### Replying from middleware
+
+Middleware has no `reply` helper. Capture the adapter in a plugin's `onStart` and send an output tree
+through it, as the plugins in `@teactjs/plugins` do:
 
 ```ts
+import { halt, type Adapter, type TeactPlugin } from "@teactjs/core";
+
+export function privateOnly(): TeactPlugin {
+  let adapter: Adapter | undefined;
+  return {
+    name: "private-only",
+    onStart: (a) => { adapter = a; },
+    async middleware(ctx) {
+      if (ctx.chatId === ctx.userId) return; // private chat: continue
+      halt(ctx);
+      await adapter?.send(ctx.chatId, {
+        type: "tg-message",
+        props: { text: "Please message me privately." },
+        children: [],
+      });
+    },
+  };
+}
+```
+
+## The TeactPlugin interface
+
+<TypeTable
+  type={{
+    name: { type: 'string', description: 'Identifier. Also used to de-duplicate plugins listed in both teact.config.ts and createBot().', required: true },
+    middleware: { type: 'Middleware', description: 'Runs on every update, in plugin order, before your own middleware.' },
+    Provider: { type: 'FunctionComponent<{ children: ReactNode }>', description: 'Wraps the app tree on every render, for contexts and error boundaries.' },
+    onStart: { type: '(adapter: Adapter) => void | Promise<void>', description: 'Runs once after the adapter connects, before updates are received. Errors are logged, not thrown.' },
+    onStop: { type: '() => void | Promise<void>', description: 'Runs on bot.stop(). Errors are logged.' },
+    services: { type: 'Record<string, unknown>', description: 'Values for the DI container, read with useService(key). Merged across plugins.' },
+  }}
+/>
+
+```tsx
 import type { TeactPlugin } from "@teactjs/core";
 
 const myPlugin: TeactPlugin = {
   name: "analytics",
-  onStart: (bot) => {},
-  middleware: (ctx, next) => next(),
-  Provider: ({ children }) => children,
+  onStart: (adapter) => console.log(`connected via ${adapter.name}`),
+  middleware: async (ctx, next) => next(),
+  Provider: ({ children }) => <>{children}</>,
   onStop: () => {},
 };
 ```
 
-Register in `createBot({ plugins: [myPlugin] })` or via `defineConfig` / `teact.config.ts`.
+**Provider order.** Each plugin's `Provider` wraps the previous result, so the **first** plugin is
+innermost and the last is outermost. `createBot({ providers })` wraps outside all of them. A provider
+can use contexts provided by plugins listed after it.
+
+### Plugins in both places
+
+`teact.config.ts` plugins and `createBot({ plugins })` are merged (config plugins first). If a plugin
+with the same `name` is listed in **both**, only the `createBot()` copy is used and Teact logs a
+warning, so you don't get two drivers, doubled providers or duplicate `onStart` / `onStop` calls.
+Repeating a plugin **within one list** is intentional and every copy is kept, for example a per-user
+and a per-chat `rateLimit`.
+
+## Authoring a plugin with definePlugin
+
+[`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk) builds a `TeactPlugin` from a `setup` function and
+gives your plugin a config object with defaults. A complete example: a "points" plugin that awards a
+point for every message, exposes a service and a hook, and closes its client on stop.
+
+```ts title="plugins/points/index.ts"
+import { definePlugin } from "@teactjs/plugin-sdk";
+import { halt, useService } from "@teactjs/core";
+import type { AsyncStorageDriver } from "@teactjs/storage";
+
+export interface PointsConfig {
+  driver: AsyncStorageDriver;       // where points are kept (Redis, Postgres, …)
+  perMessage?: number;
+  blockAfter?: number;              // halt users above this many points per day
+}
+
+export interface PointsService {
+  get(userId: string): Promise<number>;
+}
+
+const SERVICE = "points";
+
+export const points = definePlugin<PointsConfig>({
+  name: "points",
+  defaultConfig: { perMessage: 1 } as PointsConfig,
+  setup(ctx) {
+    const { driver, perMessage, blockAfter } = ctx.config;
+    const key = (userId: string) => `points:${new Date().toISOString().slice(0, 10)}:${userId}`;
+
+    // 1. Middleware: count and optionally block
+    ctx.middleware(async (bot) => {
+      if (bot.callbackData) return; // only messages earn points
+      const total = driver.incr
+        ? await driver.incr(key(bot.userId), perMessage, { ttl: 48 * 3600_000 })
+        : 0;
+      if (blockAfter && total > blockAfter) halt(bot);
+    });
+
+    // 2. A service components can read
+    const service: PointsService = {
+      get: async (userId) => (await driver.get<number>(key(userId))) ?? 0,
+    };
+    ctx.provideService(SERVICE, service);
+
+    // 3. Lifecycle
+    ctx.onStart((adapter) => console.log(`[points] ready on ${adapter.name}`));
+    ctx.onStop(() => driver.close?.());
+  },
+});
+
+/** Hook for components. */
+export const usePoints = () => useService<PointsService>(SERVICE);
+```
+
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+import { RedisDriver } from "@teactjs/redis";
+import Redis from "ioredis";
+import { points } from "./plugins/points";
+
+const driver = new RedisDriver({ client: new Redis(process.env.REDIS_URL!) });
+
+export default defineConfig({
+  plugins: [points({ driver, blockAfter: 500 })],
+});
+```
+
+```tsx title="src/pages/Profile.tsx"
+import { useBot, useQuery } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { usePoints } from "../../plugins/points";
+
+export function Profile() {
+  const { userId } = useBot();
+  const service = usePoints();
+  const { data } = useQuery({ key: `points:${userId}`, fn: () => service.get(userId) });
+  return <Message text={`You earned ${data ?? "…"} points today.`} />;
+}
+```
+
+What `setup(ctx)` can register:
+
+| Method | Effect |
+| ------ | ------ |
+| `ctx.config` | `defaultConfig` shallow-merged with the config passed to the factory. |
+| `ctx.middleware(fn)` | Add middleware. Several calls are composed with the same semantics as the bot pipeline (`next` implied, `halt` honoured). |
+| `ctx.addProvider(Component)` | Wrap the app tree. Several providers nest in order: the first one is outermost. |
+| `ctx.provideService(key, value)` | Register a service for `useService(key)` / `useOptionalService(key)`. |
+| `ctx.onStart(fn)` | Run with the adapter once it is connected. Several hooks run in order. |
+| `ctx.onStop(fn)` | Run on `bot.stop()`. |
+
+`useService(key)` throws if nothing is registered under `key`; `useOptionalService(key)` returns
+`undefined` instead. Use `teact g plugin <name>` to scaffold a plugin file.
+
+## Ready-made plugins
+
+[`@teactjs/plugins`](/docs/packages/plugins) ships production plugins built on `halt`. Add them with
+the CLI (`teact add rate-limit logger`) or by hand:
+
+```npm
+npm i @teactjs/plugins
+```
+
+| Plugin | Does | Blocks updates |
+| ------ | ---- | -------------- |
+| [`logger`](#logger) | One line (or JSON object) per update with duration | no |
+| [`errorReporter`](#errorreporter) | Sends middleware and render errors to your tracker | no |
+| [`ignoreOld`](#ignoreold) | Drops messages that queued up while the bot was offline | yes |
+| [`chatFilter`](#chatfilter) | Allow/deny by chat type, user or chat id | yes |
+| [`maintenance`](#maintenance) | Maintenance mode with an allow-list | yes |
+| [`rateLimit`](#ratelimit) | Flood protection per user, chat or custom key | yes |
+| [`analytics`](#analytics) | Counts updates, commands, users, custom events | no |
+| [`featureFlags`](#featureflags) | Per-user flags and percentage rollouts | no |
+| [`createBroadcaster`](#createbroadcaster) | Rate-limited mass messaging (not a plugin) | — |
+
+A good order is the one above: `logger` first so it sees blocked updates, `errorReporter` early so it
+catches everything after it, the blocking plugins next, and `storagePlugin`, i18n and feature plugins
+after them, so blocked updates don't load storage.
+
+```ts
+plugins: [
+  logger(),
+  errorReporter({ report: (err) => console.error(err) }),
+  ignoreOld(),
+  chatFilter({ allow: ["private"] }),
+  rateLimit({ window: 2000, limit: 3, onLimited: "⏳ Slow down!" }),
+  storagePlugin({ driver }),
+],
+```
+
+Wherever a plugin takes a `Reply` (`onLimited`, `onBlocked`, `message`), you can pass a string, an
+output tree, or `(ctx, reply) => …` for full control. Notices that fail to send are logged, never
+thrown.
+
+### logger
+
+```ts
+logger({ format: "json", redact: ["text"] });
+```
+
+<TypeTable
+  type={{
+    level: { type: "'debug' | 'info' | 'warn' | 'error'", description: "Minimum level. 'debug' also logs when an update starts.", default: "'info'" },
+    format: { type: "'pretty' | 'json'", description: 'One human-readable line, or one JSON object per line.', default: "'pretty'" },
+    logger: { type: 'LogSink | LoggerLike', description: 'A sink (entry, line) => void, or a console-like object (pino, winston).', default: 'console' },
+    redact: { type: "RedactableField[] | (entry) => LogEntry", description: "Replace 'text', 'callbackData', 'username', 'userId' or 'chatId' with '[redacted]', or transform the entry." },
+    maxTextLength: { type: 'number', description: 'Characters of message text to log.', default: '100' },
+  }}
+/>
+
+Entries include type, chat, user, truncated text or callback data, `durationMs` and `halted: true`
+for blocked updates. Errors from later middleware are logged and re-thrown.
+
+### errorReporter
+
+```ts
+errorReporter({
+  report: (err, ctx, info) => Sentry.captureException(err, { tags: { source: info.source } }),
+  notifyUser: "😵 Something broke. We have been notified!",
+});
+```
+
+<TypeTable
+  type={{
+    report: { type: '(error, ctx, info) => void | Promise<void>', description: "Send the error to your tracker. info.source is 'middleware' or 'render'; failures inside report are logged.", required: true },
+    notifyUser: { type: 'string | OutputNode', description: "Shown to the user. For render errors it replaces Teact's default fallback.", default: 'none (middleware), default fallback (render)' },
+    include: { type: "('user' | 'chat' | 'text' | 'callbackData' | 'raw')[]", description: 'Fields copied into info.context. raw is the plain Telegram update, never the grammY context.', default: "['user', 'chat']" },
+    captureRenderErrors: { type: 'boolean', description: 'Also wrap the app in an error boundary that reports render errors.', default: 'true' },
+  }}
+/>
+
+Middleware and handler errors are reported and swallowed, so the update finishes cleanly.
+
+### ignoreOld
+
+<TypeTable
+  type={{
+    maxAge: { type: 'number', description: 'Maximum message age in **seconds**.', default: '300' },
+    onIgnored: { type: '(ctx, age) => void', description: 'Called for every dropped update; age in seconds.' },
+  }}
+/>
+
+Updates without a date, such as button presses, always pass.
+
+### chatFilter
+
+```ts
+chatFilter({ allow: ["private"], block: [666], onBlocked: "Please DM me instead." });
+chatFilter({ users: [ADMIN_ID] }); // an internal bot
+```
+
+<TypeTable
+  type={{
+    allow: { type: "('private' | 'group' | 'supergroup' | 'channel')[]", description: 'Chat types the bot responds in. When the type is unknown and allow is set, the update is blocked.', default: 'all' },
+    users: { type: '(string | number)[]', description: 'User allow-list. When set, everyone else is blocked.' },
+    block: { type: '(string | number)[]', description: 'Deny-list of user or chat ids. Always wins.' },
+    onBlocked: { type: 'Reply', description: 'Sent when an update is blocked.', default: 'silent' },
+  }}
+/>
+
+### maintenance
+
+```ts
+maintenance({ isEnabled: () => process.env.MAINTENANCE === "1", allow: [123456789] });
+```
+
+<TypeTable
+  type={{
+    enabled: { type: 'boolean', description: 'Static switch. Ignored when isEnabled is set.', default: 'true' },
+    isEnabled: { type: '() => boolean | Promise<boolean>', description: 'Checked on every update (env var, flag service, DB row).' },
+    message: { type: 'Reply | null', description: 'Reply to blocked users; null is silent.', default: 'DEFAULT_MAINTENANCE_MESSAGE' },
+    allow: { type: '(string | number)[]', description: 'User ids that bypass maintenance.' },
+  }}
+/>
+
+### rateLimit
+
+```ts
+rateLimit({ window: 2000, limit: 3, onLimited: "⏳ Slow down!" });
+
+// Shared across instances: fixed windows use the driver's atomic incr()
+rateLimit({ window: 60_000, limit: 20, key: "chat", strategy: "fixed", storage: new RedisDriver({ client: redis }) });
+```
+
+<TypeTable
+  type={{
+    window: { type: 'number', description: 'Window length in **milliseconds**. Must be > 0.', default: '1000' },
+    limit: { type: 'number', description: 'Updates allowed per key per window. Must be ≥ 1.', default: '3' },
+    key: { type: "'user' | 'chat' | (ctx) => string | null | undefined", description: 'What to count against. A function returning null or undefined skips limiting (e.g. admins).', default: "'user'" },
+    strategy: { type: "'sliding' | 'fixed'", description: "'sliding' is exact within one process; 'fixed' uses one atomic counter per window and holds across instances.", default: "'sliding'" },
+    onLimited: { type: 'Reply', description: 'Sent at most once per window when a key goes over the limit.', default: 'silent' },
+    storage: { type: 'AnyStorageDriver', description: 'Driver for the counters, to share limits across instances.', default: 'in-process memory' },
+    prefix: { type: 'string', description: 'Key prefix in storage.', default: "'teact:ratelimit:'" },
+  }}
+/>
+
+It counts messages and button presses. Register it early, so blocked updates skip the rest.
+
+### analytics
+
+```tsx
+const stats = analytics({ storage: driver });
+
+createBot({
+  plugins: [stats],
+  commands: {
+    stats: { description: "Stats", handler: async (c) => c.reply(JSON.stringify(await stats.getStats())) },
+  },
+});
+
+// In a component
+const track = useTrack();
+<Button text="Buy" onClick={() => track("purchase_clicked", { plan: "pro" })} />;
+```
+
+<TypeTable
+  type={{
+    track: { type: '(event: AnalyticsEvent) => void | Promise<void>', description: 'Forward every event to PostHog, Mixpanel, a DB… Errors are logged.' },
+    storage: { type: 'AnyStorageDriver', description: 'Driver for the built-in counters; share it across instances.', default: 'memory' },
+    prefix: { type: 'string', description: 'Key prefix in storage.', default: "'teact:analytics:'" },
+    retentionDays: { type: 'number', description: 'How long per-day counters are kept.', default: '90' },
+  }}
+/>
+
+`getStats(day?)` returns `{ day, updates, updatesOnDay, uniqueUsers, commands, events }` (UTC days,
+`YYYY-MM-DD`). Recording runs alongside the rest of the pipeline and is awaited before the update ends.
+
+### featureFlags
+
+```tsx
+featureFlags({
+  flags: {
+    newMenu: true,
+    betaSearch: (ctx) => BETA_TESTERS.includes(ctx.userId),
+    premium: async (ctx) => (await db.user(ctx.userId)).premium,
+  },
+  rollout: { newMenu: 20 }, // 20% of users
+});
+
+function Menu() {
+  return useFlag("newMenu") ? <NewMenu /> : <OldMenu />;
+}
+```
+
+<TypeTable
+  type={{
+    flags: { type: 'Record<string, boolean | (ctx) => boolean | Promise<boolean>>', description: 'Flag definitions. Unknown flags are always false; a throwing predicate counts as off.', required: true },
+    rollout: { type: 'Record<string, number>', description: 'Percentage (0–100) per flag, by a stable hash of flag:userId. ANDed with flags.' },
+  }}
+/>
+
+Flags are evaluated once per update in the middleware, so `useFlag` reads them synchronously, async
+predicates included.
+
+### createBroadcaster
+
+Not a plugin: call it from a command handler, a cron job or a script.
+
+```ts
+const broadcaster = createBroadcaster({
+  adapter,
+  recipients: async function* () { for await (const u of db.users.cursor()) yield u.chatId; },
+  onProgress: (p) => console.log(`${p.processed} done`),
+});
+const result = await broadcaster.send("📣 New feature is live!");
+await db.users.markInactive(result.blocked);
+```
+
+<TypeTable
+  type={{
+    adapter: { type: "Pick<Adapter, 'send'>", description: 'The adapter you pass to createBot.', required: true },
+    recipients: { type: '() => AsyncIterable<ChatId> | Iterable<ChatId>', description: 'Chats to deliver to; stream them from a DB cursor.', required: true },
+    rate: { type: 'number', description: 'Messages per second.', default: '25' },
+    concurrency: { type: 'number', description: 'Sends in flight at once.', default: 'rate' },
+    maxRetries: { type: 'number', description: 'Retries per chat on 429 (honouring retry_after), 5xx or network errors.', default: '3' },
+    onProgress: { type: '(progress) => void', description: 'Called after each recipient.' },
+  }}
+/>
+
+Chats that blocked the bot (HTTP 403) land in `result.blocked` instead of failing the run. Pass an
+`AbortSignal` as `send(message, { signal })` to stop early.
+
+## Gotchas
+
+<Callout type="warn" title="Blocking needs halt()">
+Returning early from a middleware does not block anything: `next()` is called for you. Always call
+`halt(ctx)` to stop an update.
+</Callout>
+
+- **Order matters.** A plugin only sees errors, durations and halts from what runs after it.
+- **`teact.config.ts` is not loaded on the edge.** Pass plugins and middleware to `createBot()`
+  there.
+- **Keep middleware fast.** Updates of the same chat are queued behind each other, so a slow
+  middleware delays that chat's next update.
+- **In-memory counters are per process.** `rateLimit` and `analytics` without `storage` count per
+  instance (and per serverless isolate).
 
 ## Debug
 
-`createBot({ debug: true })` logs updates, renders, and middleware for troubleshooting.
+`createBot({ debug: true })` logs every update, render cycle and middleware run with timestamps.
+
+## Related
+
+<Cards>
+  <Card title="@teactjs/plugins" href="/docs/packages/plugins" description="Full reference of every plugin, type and helper." />
+  <Card title="@teactjs/plugin-sdk" href="/docs/packages/plugin-sdk" description="definePlugin and PluginContext." />
+  <Card title="Commands" href="/docs/guides/commands" description="Handler commands and route commands." />
+  <Card title="Authentication" href="/docs/guides/auth" description="Roles, tokens and guarded routes." />
+</Cards>

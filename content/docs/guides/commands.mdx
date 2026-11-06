@@ -1,79 +1,361 @@
 ---
 title: Commands
-description: Register Telegram bot commands with createBot, map them to routes or handlers, and read them in components with useCommand.
+description: Define bot commands that open routes or run handlers, co-locate them with routes, handle deep links, register Telegram's command menu, and read the command in components.
 ---
 
+Commands are the `/start`, `/help` and `/settings` messages users send to your bot. In Teact a
+command either **opens a route** (and renders a screen) or **runs a handler** (and replies
+directly). Commands also fill Telegram's command menu, the list users see when they type `/`.
 
-There are two ways to register commands: standalone via `createBot`, or
-[co-located on routes](/docs/guides/router#co-located-commands) via
-`createRouter`. Both end up in Telegram's command menu.
+You can define commands in two places, and both end up in the same table:
 
-## Registering commands
+- `createBot({ commands })` for standalone and handler commands.
+- `command:` on a route in `createRouter` for commands that open that route.
 
-Pass a `commands` object to `createBot`:
+## A first set of commands
+
+```tsx title="src/index.tsx"
+import { createBot, createRouter, type CommandDef } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { Home, Settings, PokemonCard } from "./screens";
+
+const router = createRouter({
+  "/": Home,
+  "/settings": Settings,
+  "/pokemon/:id": PokemonCard,
+});
+
+const commands: Record<string, CommandDef> = {
+  start: {
+    description: "Open the menu",
+    route: "/",
+    deepLink: ([payload]) => (payload?.startsWith("poke-") ? `/pokemon/${payload.slice(5)}` : "/"),
+  },
+  settings: { description: "Your settings", route: "/settings" },
+  help: {
+    description: "Show help",
+    handler: ({ reply }) =>
+      reply("What do you need help with?", {
+        buttons: [
+          [{ text: "⚙️ Settings", route: "/settings" }, { text: "🏠 Menu", route: "/" }],
+          [{ text: "📖 Docs", url: "https://example.com/docs" }],
+        ],
+      }),
+  },
+  ping: { description: "Check the bot is alive", handler: "pong 🏓" },
+};
+
+export const bot = createBot({ adapter: new TelegramAdapter(), router, commands });
+
+if (import.meta.main) bot.start();
+```
+
+<TelegramPreview
+  bot="Pokédex Bot"
+  user="/help"
+  text="What do you need help with?"
+  buttons={[["⚙️ Settings", "🏠 Menu"], [{ text: "📖 Docs", url: "https://example.com/docs" }]]}
+/>
+
+## How a command is handled
+
+When a text message starts with `/`, Teact:
+
+<Steps>
+<Step>
+### Parses it
+
+The first word is the command and the rest, split on whitespace, are the arguments.
+`/start poke-25` gives `start` and `["poke-25"]`. A `@botname` suffix (`/help@my_bot`, common in
+groups) is stripped, and the name is lowercased before lookup.
+</Step>
+<Step>
+### Looks it up
+
+If no command has that name, the message is not treated as a command: the current screen
+re-renders with it, like any other text. If it matches, the chat's component tree is reset so the
+command starts from a clean state.
+</Step>
+<Step>
+### Runs the middleware pipeline
+
+Plugin middleware, then your middleware, run as for any update. A middleware can call
+`halt(ctx)` to stop the command; the reset is deferred until the end of the pipeline, so a halted
+command leaves the current screen and its buttons intact.
+</Step>
+<Step>
+### Renders or replies
+
+A command with a `handler` runs the handler in place of rendering. Otherwise Teact renders the
+router at the command's path: the `deepLink` result when the command has arguments, else `route`,
+else the router's default route.
+</Step>
+</Steps>
+
+## CommandDef reference
+
+<TypeTable
+  type={{
+    description: { type: 'string', required: true, description: "Text shown next to the command in Telegram's menu." },
+    route: { type: 'string', description: 'Path to open. Requires a router.' },
+    handler: { type: 'string | ((ctx: CommandContext) => void | Promise<void>)', description: 'A static reply, or a function that replies itself. When set, `route` and `deepLink` are ignored.' },
+    deepLink: { type: '(args: string[]) => string', description: 'Turn the arguments into a path. Called only when there is at least one argument; otherwise `route` is used.' },
+  }}
+/>
+
+### CommandContext
+
+The object a handler function receives:
+
+<TypeTable
+  type={{
+    args: { type: 'string[]', description: 'Words after the command.' },
+    reply: { type: '(text: string, options?: ReplyOptions) => Promise<void>', description: 'Send a plain-text message to the chat, with optional inline buttons or a reply keyboard.' },
+    chatId: { type: 'string', description: 'Current chat ID.' },
+    user: { type: '{ id: string; username?: string; firstName?: string }', description: 'The sender.' },
+    platform: { type: 'string', description: 'Platform name, e.g. "telegram".' },
+    raw: { type: 'any', description: 'The platform context (the grammY context on Telegram).' },
+  }}
+/>
+
+`ReplyOptions`:
+
+<TypeTable
+  type={{
+    buttons: { type: 'ReplyButton[][]', description: 'Inline keyboard rows. `ReplyButton` is `{ text, url?, route? }`; a `route` button navigates, a `url` button opens a link.' },
+    replyKeyboard: { type: 'ReplyKeyboardButton[][]', description: 'Reply keyboard rows. `ReplyKeyboardButton` is `{ text, requestContact?, requestLocation? }`.' },
+  }}
+/>
 
 ```ts
-import { createBot } from "@teactjs/core";
-import { TelegramAdapter } from "@teactjs/telegram";
-
-const bot = createBot({
-  component: App,
-  adapter: new TelegramAdapter(),
-  token: process.env.TELEGRAM_BOT_TOKEN!,
-  commands: {
-    start: { description: "Start the bot", route: "/" },
-    help: { description: "Show help", handler: "Use /start to begin." },
-    echo: {
-      description: "Echo args",
-      handler: async (ctx) => ctx.reply(ctx.args.join(" ")),
+const commands: Record<string, CommandDef> = {
+  echo: {
+    description: "Repeat what you say",
+    handler: async ({ args, reply }) => {
+      await reply(args.length ? args.join(" ") : "Usage: /echo <text>");
     },
-    settings: { description: "Settings", route: "/settings" },
+  },
+  contact: {
+    description: "Share your number",
+    handler: ({ reply }) =>
+      reply("Tap the button to share your number.", {
+        replyKeyboard: [[{ text: "📱 Share", requestContact: true }]],
+      }),
+  },
+};
+```
+
+## Route or handler?
+
+| Use a route command when… | Use a handler command when… |
+| --- | --- |
+| The command opens a screen with state, buttons and follow-up interaction | The answer is one message (help text, status, a link) |
+| You want guards, params and deep links | You need the raw arguments and no UI state |
+| The same screen is reachable from buttons | It should run without mounting any component |
+
+Handler replies are plain text. Their buttons can navigate (`route`) or open links (`url`); for
+anything richer, use a route.
+
+## Co-located route commands
+
+Put the command next to the route it opens:
+
+```tsx title="src/router.tsx"
+export const router = createRouter({
+  "/": {
+    component: MainMenu,
+    command: { name: "start", description: "Open the showcase" },
+  },
+  "/list": {
+    component: PokemonList,
+    command: { name: "pokedex", description: "Browse the Pokédex" },
+  },
+  "/pokemon/:id": PokemonCard,
+});
+```
+
+A route `command` takes `name`, `description` and an optional `deepLink`; its `route` is the path
+it sits on. When `createBot` starts, it merges route commands first and then
+`createBot({ commands })`, so an explicit command with the same name wins.
+
+A common split is to co-locate every command that opens a screen, and keep only handler commands
+(`/help`, `/ping`) in `createBot`.
+
+## Deep links
+
+Telegram links of the form `https://t.me/<bot>?start=<payload>` send `/start <payload>` when the
+user taps **Start**. The payload arrives as `args[0]`; resolve it with `deepLink`:
+
+```ts
+start: {
+  description: "Open the menu",
+  route: "/",
+  deepLink: ([payload]) => {
+    if (payload?.startsWith("poke-")) return `/pokemon/${payload.slice(5)}`;
+    if (payload?.startsWith("order-")) return `/orders/${payload.slice(6)}`;
+    return "/";
+  },
+},
+```
+
+`deepLink` works on any command, not only `start`: with
+`deepLink: ([id]) => "/pokemon/" + id`, the message `/open 25` opens that card. The resolved path goes through normal
+matching and guards; an unknown path renders `notFound`. More in
+[Router → Deep links](/docs/guides/router#deep-links).
+
+## Registering the command menu
+
+The menu users see when they type `/` is set with Telegram's `setMyCommands`. Teact builds it from
+every command's name and `description`.
+
+<Tabs items={['Polling / webhook server', 'Serverless']}>
+<Tab value="Polling / webhook server">
+
+`bot.start()` registers the menu on every start. Nothing to do. If registration fails (for
+example a network error), Teact logs a warning and keeps running.
+
+</Tab>
+<Tab value="Serverless">
+
+`bot.fetch()` does **not** register the menu, to avoid a Telegram call on every cold start. Run
+`bot.setCommands()` once after each deploy that changes commands. It resolves to the number of
+commands registered:
+
+```bash
+bun -e "import { bot } from './src/index'; console.log(await bot.setCommands())"
+```
+
+See [Deployment → Register the command menu](/docs/guides/deployment#register-the-command-menu).
+
+</Tab>
+</Tabs>
+
+## Commands and middleware
+
+Every command goes through the middleware pipeline, including handler commands: the handler takes
+the place of the render step. Rate limits, maintenance mode, loggers and error reporters apply to
+commands, and `halt(ctx)` stops them.
+
+```ts title="src/middleware/admin-commands.ts"
+import { halt, type Middleware } from "@teactjs/core";
+
+const ADMINS = new Set(["123456789"]);
+const ADMIN_COMMANDS = ["/broadcast", "/stats"];
+
+export const adminCommands: Middleware = async (ctx) => {
+  const isAdminCommand = ADMIN_COMMANDS.some((c) => ctx.text?.split(/[\s@]/)[0] === c);
+  if (isAdminCommand && !ADMINS.has(ctx.userId)) {
+    await ctx.raw.reply("That command is for admins.");
+    halt(ctx);
+  }
+};
+
+// createBot({ middleware: [adminCommands], ... })
+```
+
+Because the reset is deferred until the end of the pipeline, a halted command leaves the user's
+current screen and its buttons working. See
+[Middleware & plugins → The pipeline](/docs/guides/middleware-plugins#the-pipeline).
+
+## Reading the command in a component: useCommand
+
+`useCommand()` returns `{ name, args }` for the update that opened the screen, or `null`.
+
+```tsx title="src/screens/Search.tsx"
+import { useState, useCommand } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+
+export function Search() {
+  const cmd = useCommand();
+  // Capture the arguments once: useCommand() is only set during the command's own update.
+  const [query] = useState(() => cmd?.args.join(" ") ?? "");
+
+  return <Message text={query ? `Results for "${query}"…` : "Send /search <words>"} />;
+}
+```
+
+What `useCommand()` returns:
+
+| Update | Value |
+| --- | --- |
+| A route command (`/search pikachu`) | `{ name: "search", args: ["pikachu"] }` |
+| A route button press | `{ name: "", args: [] }` |
+| Any other update (text, button handlers, shared media) | `null` |
+
+Handler commands never render, so they never reach `useCommand()`.
+
+## Recipes
+
+### Aliases for one screen
+
+Point several commands at one route and branch on the name:
+
+```tsx
+const commands: Record<string, CommandDef> = {
+  orders: { description: "Your orders", route: "/orders" },
+  history: { description: "Order history", route: "/orders" },
+};
+
+function Orders() {
+  const cmd = useCommand();
+  const [showAll] = useState(() => cmd?.name === "history");
+  return <Message text={showAll ? "All orders" : "Open orders"} />;
+}
+```
+
+### A status command with live data
+
+Handler functions can be async and fetch what they need:
+
+```ts
+status: {
+  description: "Service status",
+  handler: async ({ reply }) => {
+    const res = await fetch("https://status.example.com/api.json");
+    const { ok } = (await res.json()) as { ok: boolean };
+    await reply(ok ? "✅ All systems normal" : "⚠️ We're investigating an issue", {
+      buttons: [[{ text: "Status page", url: "https://status.example.com" }]],
+    });
+  },
+},
+```
+
+### Commands that start a conversation
+
+Imperative conversations from `@teactjs/telegram` can be started by a command of their own:
+
+```ts
+defineConversation("feedback", {
+  command: "feedback",
+  async handler(conversation) {
+    const text = await conversation.prompt("What do you think of the bot?");
+    await conversation.send(`Thanks! You said: ${text}`);
   },
 });
 ```
 
-Each `CommandDef` has a `description` plus one of:
+The conversations plugin intercepts `/feedback` before Teact's pipeline, so it does not go through
+Teact middleware and is not added to the menu. To list it in the menu, also declare it in
+`commands` or on a route. See [Conversations](/docs/guides/conversations#imperative-conversations).
 
-- **`route`** — navigates the Teact router to that path (requires a router).
-- **`handler`** — a static reply string, or an async function
-  `(ctx) => ...` for an imperative reply.
-- **`deepLink`** — resolve `/start <payload>` arguments into a route path.
+## Gotchas
 
-The adapter registers these with Telegram so they appear in the command menu.
+<Callout type="warn" title="Use lowercase names">
+  Incoming command names are lowercased before lookup, so a command registered as `myOrders` never
+  matches. Telegram's menu also only accepts lowercase letters, digits and underscores.
+</Callout>
 
-## Deep links
+- A command resets the chat's component tree: any form or conversation in progress on the current
+  screen is discarded.
+- An unregistered `/something` is ordinary text. The current screen re-renders and can read it
+  with `useText()`.
+- `handler` wins over `route`: a command with both never renders the route.
 
-Telegram deep links look like `https://t.me/YourBot?start=<payload>`. Handle the
-payload with a `deepLink` resolver (on a command or a
-[co-located route command](/docs/guides/router#co-located-commands)):
+## Related
 
-```ts
-commands: {
-  start: {
-    description: "Start",
-    deepLink: (args) => (args[0] ? `/pokemon/${args[0]}` : "/"),
-  },
-}
-```
-
-## useCommand
-
-Inside components, read the parsed command and its arguments:
-
-```tsx
-import { useCommand } from "@teactjs/core";
-import { Message } from "@teactjs/ui";
-
-function Screen() {
-  const cmd = useCommand();
-  return <Message text={cmd?.command ?? "menu"} />;
-}
-```
-
-Use this to branch UI when the same route handles multiple command aliases.
-
-## Buttons that carry routes
-
-Inline buttons can navigate directly. Prefer the declarative form
-`<Button route="/x" params={{ id }} />`, or use `onClick={() => navigate(...)}`.
-See [Components](/docs/guides/components).
+<Cards>
+  <Card title="Router" href="/docs/guides/router" description="Routes, guards, params and deep-link matching." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="The pipeline commands run through." />
+  <Card title="Conversations" href="/docs/guides/conversations" description="Multi-step flows started from commands or buttons." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Register the menu on serverless." />
+</Cards>

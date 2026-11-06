@@ -1,82 +1,291 @@
 ---
 title: Troubleshooting
-description: Fixes for common Teact issues — command not found, a bot that won't respond, edge gotchas, and TypeScript/JSX errors.
+description: Causes and fixes for common Teact failures — missing tokens, duplicate pollers, a leftover webhook, lost button handlers on serverless, sessions that don't persist, HTML parse errors, clamped text, TypeScript/JSX errors — and how to read teact doctor output.
 ---
 
-Quick fixes for the issues you're most likely to hit when starting out. Running `teact doctor`
-inside a project also checks your setup and suggests fixes.
+Most problems show up as a line in the console that starts with `[teact]` or `[telegram]`. This page lists the common ones with their cause and fix. Start with `teact doctor` in the project root (`bunx teact doctor` if the CLI isn't installed globally): it checks your environment, project, token, webhook and dependencies in one go.
 
-## `teact: command not found`
+```bash
+teact doctor
+```
 
-Fresh `bun create teact` installs now resolve this automatically — the scaffolder pins a published
-`@teactjs/cli` version so the local `teact` binary always lands in `node_modules/.bin`. If you still
-see it in an older or hand-assembled project:
+## Reading `teact doctor` output
 
-1. Re-run install from the project root so the binary is (re)created:
+The doctor prints four sections. Each line is `✓` (ok), `⚠` (warning), `✗` (error) or `ℹ` (info), and problems are followed by `→` lines with a suggested fix:
+
+```txt
+Environment
+  ✓ Bun 1.2.4
+
+Project
+  ✓ Project: /home/me/my-bot
+  ✓ package.json
+  ✓ tsconfig.json
+  ✓ Dependencies installed
+  ✓ Entry file (src/index.tsx)
+  ✓ TypeScript 5.7.3
+
+Telegram
+  ⚠ A webhook is set (https://my-bot.example.workers.dev) — polling (teact dev) will not receive updates
+      → Remove it for local dev: teact webhook delete
+
+Dependencies
+  ✓ @teactjs/* 1.0.0 (4 packages)
+  ✓ React 19.1.0 (single copy)
+
+1 warning(s)
+```
+
+| Section | What it checks |
+| --- | --- |
+| **Environment** | Running under Bun, version 1.1.0 or newer. |
+| **Project** | `package.json`, `tsconfig.json`, installed `node_modules`, an entry file, local TypeScript, a `.env` (or `TELEGRAM_BOT_TOKEN` in the environment), and `WEBHOOK_SECRET` when the config uses webhook mode or a `wrangler.jsonc`/`wrangler.toml` exists. `teact.config.ts` is reported as optional. |
+| **Telegram** | The token is set and looks like `123456789:ABC…`; `getMe` accepts it; whether a webhook is set and whether that matches your mode; the webhook's last error. |
+| **Dependencies** | At least one `@teactjs/*` package declared; all installed `@teactjs/*` on one version; declared packages actually installed; exactly one copy of React; a client library for each database package. |
+
+The run ends with `All checks passed!` or a count of errors and warnings, and exits with code 1 if there are errors. `teact doctor --offline` skips the `getMe` and webhook calls (each has a 3-second timeout).
+
+## Startup
+
+<Accordions>
+<Accordion title="No bot token found">
+
+**Symptom.** `bot.start()` prints `[teact] No bot token found. Add TELEGRAM_BOT_TOKEN to your .env file.` and exits with code 1. On serverless, `bot.fetch()` throws `[teact] No bot token. Pass createBot({ token }), bot.fetch(req, { token }), or set TELEGRAM_BOT_TOKEN.`
+
+**Cause.** None of the token sources had a value: `createBot({ token })`, `process.env.TELEGRAM_BOT_TOKEN` (which includes a `.env` in the working directory), or `bot.fetch(req, { token })`.
+
+**Fix.**
+
+- Put the token in `.env` in the project root, with a real value after the `=`:
+
+  ```bash title=".env"
+  TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+  ```
+
+- Run the bot from the project root. The `.env` file is read from the current working directory.
+- The name is always `TELEGRAM_BOT_TOKEN`. A non-empty value already set in your shell wins over `.env`, so a stale exported token hides the file's value.
+- On Cloudflare Workers, store it with `wrangler secret put TELEGRAM_BOT_TOKEN` and pass `env.TELEGRAM_BOT_TOKEN` to `bot.fetch()`. `.env` is not read on the edge.
+
+</Accordion>
+<Accordion title="The token is rejected or Telegram can't be reached">
+
+**Symptom.** `bot.start()` fails right after `[telegram] Starting polling…`, or `teact doctor` reports `Token rejected by Telegram: Unauthorized` or `TELEGRAM_BOT_TOKEN does not look like a Telegram token`.
+
+**Cause.** The adapter calls `getMe` before polling, so a bad token or an unreachable `api.telegram.org` fails the start within seconds instead of hanging.
+
+**Fix.** Copy the token again from [@BotFather](https://t.me/BotFather) (`/token` regenerates it). If the token is fine, check your network or proxy; `teact doctor` says `Could not reach Telegram (timed out after 3s)` in that case.
+
+</Accordion>
+<Accordion title="teact: command not found">
+
+**Cause.** The `teact` binary comes from the `@teactjs/cli` package in `node_modules/.bin`. Fresh `bun create teact` projects include it; an older or hand-assembled project may not, or dependencies weren't installed.
+
+**Fix.**
+
+1. Make sure `@teactjs/cli` is in `package.json` (`devDependencies` or `dependencies`). The `dev` and `build` scripts rely on it.
+2. Re-run the install from the project root so the binary is created:
 
    ```bash
    bun install
    ```
 
-2. Make sure `@teactjs/cli` is in your `package.json` (`devDependencies` or `dependencies`). The
-   `dev`, `build`, and `start` scripts all rely on it.
+3. Run scripts through your package manager (`bun dev`, `bun run build`) or with `bunx teact …`, so the local binary is used rather than a missing global one.
 
-3. Run scripts through your package manager (`bun dev`, `bun run build`) so the local binary on
-   `node_modules/.bin` is used rather than a missing global one.
+</Accordion>
+<Accordion title="Port already in use (webhook mode)">
 
-## Bot doesn't respond
+**Symptom.** `[telegram] Port 3000 is already in use. Choose a different webhook port.`
 
-If the bot starts but never replies to messages:
+**Cause.** With `mode: "webhook"`, `bot.start()` starts an HTTP server on `webhook.port` (default 3000) and another process is listening there.
 
-- **Check the token.** `TELEGRAM_BOT_TOKEN` must be set in `.env` (it is always this name). Confirm
-  there's a real value after the `=`:
+**Fix.** Stop the other process or set a different `webhook.port`. See [Configuration](/docs/getting-started/configuration#webhookconfig).
 
-  ```bash
-  # .env
-  TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-  ```
+</Accordion>
+</Accordions>
 
-- **Only run one polling instance.** Telegram allows a single `getUpdates` consumer per token. If a
-  second `bun dev` (or a deployed instance) is polling the same token, neither will receive updates
-  reliably. Stop the duplicate, or switch one to webhook mode. Guarding `bot.start()` behind
-  `if (import.meta.main)` prevents accidental double-starts when the file is imported.
+## The bot doesn't respond
 
-- **Send `/start` or a message** to the bot in Telegram, and watch the dev console for incoming
-  updates.
+<Accordions>
+<Accordion title="Two processes are polling the same token">
 
-## Edge / serverless gotchas
+**Symptom.** Updates arrive at one process and not the other, or polling stops with `[telegram] Polling stopped:` followed by a `409: Conflict` error from Telegram.
 
-On Cloudflare Workers, Vercel Edge, and Deno Deploy the isolate **freezes once the `Response`
-resolves**, and there is **no filesystem**. Rendering and the reply itself complete before
-`bot.fetch()` returns, but background work does not survive. The most common surprises:
+**Cause.** Telegram allows one `getUpdates` consumer per token. A second `bun dev`, a forgotten terminal, or a deployed instance polling the same token competes for updates.
 
-- **`teact.config.ts` is ignored** (loading it needs `fs`). Pass `plugins` and other options directly
-  to `createBot({ plugins })`.
-- **In-memory session doesn't persist.** Provide a durable `SessionStore` (KV/Redis/DB) via
-  `createBot({ session: { store } })`.
-- **The `'file'` storage driver can't write** — it warns and degrades to memory. Use a custom
-  async-backed `StorageDriver`.
-- **Post-commit side effects are dropped.** `useStream`, `useQuery`, and work in `useEffect`/`useOn`
-  that runs after the first commit won't finish before the freeze. These are fine under long-running
-  polling.
+**Fix.**
 
-See [Deployment](/docs/guides/deployment) for the full edge setup.
+- Stop the duplicate. Use a separate bot token (a second bot from BotFather) for local development.
+- Keep `bot.start()` behind `if (import.meta.main)`, so importing the bot file from a test or a serverless entry doesn't start another poller.
+- Restarts within `teact dev` are handled for you: `bun --watch` restarts the process, and with `--hot` the engine stops the previous bot instance before starting the new one.
 
-## Text renders with stray tags or won't send
+</Accordion>
+<Accordion title="A webhook is set while you poll">
 
-- **Don't hand-concatenate HTML** into message text. Content inside `<Bold>`, `<Italic>`, `<Code>`, and
-  plain message text is **auto-escaped** when HTML mode is active. If you set `parseMode="HTML"`
-  yourself on a `<Message>`, your text is passed **verbatim** and you own the escaping.
-- **Message limits are clamped**, not errored: text is capped at 4096 chars, captions at 1024, and
-  media groups at 2–10 items (a single item is sent as a normal media message).
-- **You can't edit text onto a photo in place** (or vice-versa). The engine sends a new message when
-  the media kind changes instead of editing.
+**Symptom.** `teact doctor` warns `A webhook is set (https://…) — polling (teact dev) will not receive updates`, and the local bot stays silent.
 
-## TypeScript / JSX errors
+**Cause.** Telegram delivers updates either to a webhook or to `getUpdates`, not both. A webhook left over from a deployment (for example `teact webhook set` for Cloudflare Workers) takes the updates.
 
-Teact uses the React JSX runtime. Your `tsconfig.json` needs:
+**Fix.** Delete it for local development, and check the result:
 
-```json
+```bash
+teact webhook delete
+teact webhook info
+```
+
+`teact webhook delete --drop` also discards updates queued while the bot was offline. Set the webhook again (`teact webhook set <https-url> --secret $WEBHOOK_SECRET`) when you redeploy. If `teact.config.ts` uses `mode: "webhook"` but no webhook is set, the doctor warns about the opposite case.
+
+</Accordion>
+<Accordion title="A middleware stops the update">
+
+**Cause.** A middleware called `halt(ctx)`, so no later middleware ran and nothing was rendered. The plugins in [`@teactjs/plugins`](/docs/packages/plugins) do this on purpose: `chatFilter`, `maintenance`, `ignoreOld` and `rateLimit`.
+
+**Fix.** Check which middleware halted. The `logger` plugin marks halted updates, and `createBot({ debug: true })` logs every update and middleware run. A halted update leaves the chat's current screen and button handlers in place.
+
+</Accordion>
+<Accordion title="Conversation buttons do nothing">
+
+**Symptom.** `[teact] Received conversation callback "__convo:…" but no conversationsPlugin is registered.`
+
+**Cause.** A `<Button conversation="…">` was pressed, but `conversationsPlugin()` isn't loaded. On the edge, a plugin listed only in `teact.config.ts` counts as not loaded.
+
+**Fix.** Add `conversationsPlugin()` from `@teactjs/telegram` to `createBot({ plugins })`. See [Conversations](/docs/guides/conversations).
+
+</Accordion>
+</Accordions>
+
+## Serverless and edge
+
+On Cloudflare Workers, Vercel Edge and Deno Deploy, each request can land on a fresh isolate, the isolate freezes once the `Response` resolves, and there is no filesystem. Rendering and the reply finish before `bot.fetch()` returns; anything that relies on process memory or files does not carry over.
+
+<Accordions>
+<Accordion title="Buttons re-render the screen instead of running onClick">
+
+**Symptom.** Tapping a button resets the screen to its initial state, with this warning: `[teact] No handler for button "__cb:…" in chat … (bot restarted or new serverless instance) — re-rendering the screen.`
+
+**Cause.** `onClick` functions are kept in the process's memory for the chat. After a restart or on a cold isolate they're gone, so Teact re-renders the screen in place (editing the message the button lives on) rather than doing nothing.
+
+**Fix.** Make buttons survive instances:
+
+- Navigate with route buttons, which carry their target in the button: `<Button text="Settings" route="/settings" />`, or `route="/item/:id" params={{ id }}`.
+- Keep screen state in `useSession` (with a durable store) or `useStorage` instead of `useState`, so the re-render shows the current state.
+
+This also happens under polling after a restart; there it's usually harmless.
+
+</Accordion>
+<Accordion title="Sessions don't persist between messages">
+
+**Symptom.** On the first request: `[teact] Running on the edge with the default in-memory session store — sessions will NOT persist between requests.` Counters reset, guards forget the user, and the chosen language resets.
+
+**Cause.** The default `MemorySessionStore` lives in one isolate's memory. `teact.config.ts` isn't loaded on the edge, so a store configured there is ignored too.
+
+**Fix.** Pass a durable store to `createBot()`:
+
+```ts title="src/worker.ts"
+import { createBot, getEnv } from "@teactjs/core";
+import { d1SessionStore } from "@teactjs/cloudflare";
+
+const bot = createBot({
+  // ...
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
+});
+```
+
+Other options: `kvSessionStore` ([`@teactjs/cloudflare`](/docs/packages/cloudflare)), `redisSessionStore` with Upstash ([`@teactjs/redis`](/docs/packages/redis)), `postgresSessionStore` with Neon ([`@teactjs/postgres`](/docs/packages/postgres)).
+
+</Accordion>
+<Accordion title="Plugins or config don't apply on the edge">
+
+**Cause.** `teact.config.ts` is loaded with the filesystem, which doesn't exist on the edge, so its `plugins`, `middleware`, `session` and `mode` are silently skipped.
+
+**Fix.** Pass them to `createBot()`. The scaffolded projects already register plugins there. The `'file'` storage driver also can't write on the edge (it warns and degrades to memory): use `D1Driver`, `KVDriver`, `RedisDriver` with Upstash or `PostgresDriver` with Neon. See [Databases](/docs/guides/databases).
+
+</Accordion>
+<Accordion title="Streaming, queries or effects stop halfway">
+
+**Cause.** `useStream`, `useQuery` and work in `useEffect` or `useOn` that runs after the first commit isn't awaited by `bot.fetch()`, so the isolate can freeze before it finishes.
+
+**Fix.** Run those features on a long-running process (polling or a webhook server), or do the work before rendering. See [Deployment](/docs/guides/deployment).
+
+</Accordion>
+<Accordion title="The command menu is empty after deploying">
+
+**Cause.** `bot.start()` registers commands with Telegram, but `bot.fetch()` never does, to avoid a call on every cold start.
+
+**Fix.** Call `bot.setCommands()` once after each deploy, for example from a small script run with your production token.
+
+</Accordion>
+</Accordions>
+
+## Messages and formatting
+
+<Accordions>
+<Accordion title="Can't parse entities / stray tags in the message">
+
+**Symptom.** The message isn't sent and the console shows `[teact] Send fallback failed:` with Telegram's `Bad Request: can't parse entities`, or the user sees literal `<b>` tags.
+
+**Cause.** How text is escaped depends on who chose the parse mode:
+
+- With formatting components (`<Bold>`, `<Italic>`, `<Code>`), Teact switches the message to HTML and **escapes** `&`, `<` and `>` in plain text and in the `text` prop. User content is safe.
+- With an explicit `parseMode` on `<Message>`, the `text` prop is sent **verbatim**. Escaping is your job.
+
+**Fix.** Prefer formatting components over hand-written markup:
+
+```tsx tab="Safe"
+<Message text={`Order for ${name}: `}>
+  <Bold>{total}</Bold>
+</Message>
+```
+
+```tsx tab="Your responsibility"
+// parseMode set by you: escape user input yourself, or this breaks on "<" or "&".
+<Message parseMode="HTML" text={`<b>${escapeHtml(name)}</b>`} />
+```
+
+`escapeHtml` here is your own helper that replaces `&`, `<` and `>` with entities; the `@teactjs/telegram` package doesn't export one.
+
+</Accordion>
+<Accordion title="Long text is cut off with …">
+
+**Symptom.** `[teact] Message text exceeds Telegram's 4096-char limit (5120); truncating.` or the same for `Caption` at 1024.
+
+**Cause.** Telegram rejects longer text with a 400 error, so Teact clamps it and appends `…` instead of failing.
+
+**Fix.** Split long content across screens (for example a paginated list with Next/Previous buttons), or send it as a `<Document>`. Related limits Teact enforces: a `<MediaGroup>` with more than 10 items is cut to 10, one item is sent as a normal photo or video, and an empty group sends nothing; a `<Poll>` with fewer than 2 options logs a warning because Telegram will reject it.
+
+</Accordion>
+<Accordion title="A message with buttons but no text isn't sent">
+
+**Symptom.** `[teact] A <Message> has buttons but no text — Telegram requires text to attach a keyboard, so nothing was sent.`
+
+**Fix.** Give the `<Message>` a `text` (or text children) when it has an `<InlineKeyboard>`.
+
+</Accordion>
+<Accordion title="A new message appears instead of an edit">
+
+**Cause.** Teact edits the chat's last bot message when it can. It sends a new message instead when the user sent a message since (not a button press), when you navigate with `mode: "push"` or `"stack"`, or when the media kind changes: Telegram can't edit text onto a photo or the reverse.
+
+**Fix.** This is expected. Use the default `replace` navigation to edit in place; see [Router](/docs/guides/router).
+
+</Accordion>
+<Accordion title="The user sees “Something went wrong”">
+
+**Cause.** A component threw during render. Teact logs `[teact] Render error in chat …:` with the error, shows a generic error screen without the error text, and rebuilds the chat's screen on the next update.
+
+**Fix.** Read the logged error. To show your own screen, wrap the tree in `ErrorBoundary` with a `fallback`; see [Upgrading](/docs/getting-started/upgrading#the-default-error-screen-no-longer-shows-the-error-message).
+
+</Accordion>
+</Accordions>
+
+## TypeScript, JSX and React
+
+<Accordions>
+<Accordion title="Cannot use JSX unless the '--jsx' flag is provided">
+
+**Cause.** `tsconfig.json` is missing the JSX settings.
+
+**Fix.** Teact uses the React JSX runtime:
+
+```json title="tsconfig.json"
 {
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -85,5 +294,39 @@ Teact uses the React JSX runtime. Your `tsconfig.json` needs:
 }
 ```
 
-Scaffolded projects include this already. If you see "Cannot use JSX unless the '--jsx' flag is
-provided" or unexpected `JSX.IntrinsicElements` errors, this is the setting to check.
+Scaffolded projects include this already. See [Installation](/docs/getting-started/installation#tsconfig) for the full file.
+
+</Accordion>
+<Accordion title="Invalid hook call">
+
+**Cause.** Usually two copies of React are installed, so `@teactjs/core` and your code use different instances. `teact doctor` reports `Multiple React versions installed: …` with the paths. Calling a Teact hook outside a bot component throws `Teact hooks must be used inside a bot component`.
+
+**Fix.** Pin one `react` version (`overrides` or `resolutions` in `package.json`) and reinstall. Call hooks only inside components rendered by the bot.
+
+</Accordion>
+<Accordion title="<Button> must be used inside <InlineKeyboard>">
+
+**Cause.** `<Button>`, `<ButtonRow>` and `<Button.WebApp>` check that they're inside an `<InlineKeyboard>` and throw otherwise. `useNavigate`, `useParams` and `useRoute` similarly throw outside a router.
+
+**Fix.** Wrap buttons in `<InlineKeyboard>` inside a `<Message>`. Use `useNavigate` only in bots created with `router`.
+
+</Accordion>
+<Accordion title="Router redirect loop">
+
+**Symptom.** `[teact] Router redirect loop: exceeded 5 redirects starting from "/…".` and the not-found page is shown.
+
+**Cause.** `beforeLoad` guards redirect in a cycle, for example `/a` to `/login` and `/login` back to `/a`.
+
+**Fix.** Make sure the target of a redirect doesn't redirect back under the same session state.
+
+</Accordion>
+</Accordions>
+
+## Related
+
+<Cards>
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="Token sources, precedence and the edge caveat." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Polling, webhooks and the edge checklist." />
+  <Card title="CLI" href="/docs/packages/cli" description="teact doctor, teact webhook and the other commands." />
+  <Card title="Testing" href="/docs/guides/testing" description="Reproduce a bug with MockAdapter before you fix it." />
+</Cards>

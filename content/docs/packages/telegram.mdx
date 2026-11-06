@@ -1,72 +1,295 @@
 ---
 title: "@teactjs/telegram"
-description: TelegramAdapter (grammY driver) plus conversation and streaming plugins, serializeOutput, and defineConversation.
+description: API reference for the Telegram adapter — TelegramAdapter (grammY), polling, webhook server and serverless modes, serializeOutput, conversationsPlugin, defineConversation and streamPlugin.
 ---
 
+`@teactjs/telegram` is the production transport for Teact. `TelegramAdapter` implements the core
+`Adapter` contract on top of [grammY](https://grammy.dev) with auto-retry, turns rendered component
+trees into Bot API calls, and supports long polling, a built-in webhook server and serverless
+`bot.fetch()`. The package also ships imperative async/await conversations
+(`@grammyjs/conversations`) and native message streaming (`@grammyjs/stream`).
 
-The production transport for Teact. `TelegramAdapter` bridges the core reconciler to the Telegram
-Bot API via grammY and supports both polling and webhook (edge) modes. The package also ships the
-imperative conversation and streaming plugins.
-
-```bash
-bun add @teactjs/telegram
+```npm
+npm i @teactjs/telegram @teactjs/core @teactjs/ui react
 ```
+
+`@teactjs/core` and `react` are peer dependencies. `grammy`, `@grammyjs/auto-retry`,
+`@grammyjs/conversations` and `@grammyjs/stream` install automatically.
+
+**When to use**
+
+- Any bot that talks to real Telegram — it is the adapter you pass to `createBot`.
+- When you want an imperative `await conversation.prompt()` flow instead of `useConversation`.
+- When you need raw grammY access (`adapter.getBot()`, `adapter.use(...)`).
+
+## Quick example
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { TelegramAdapter, conversationsPlugin, defineConversation, streamPlugin } from "@teactjs/telegram";
+
+const feedback = defineConversation("feedback", async (conversation) => {
+  const name = await conversation.prompt("What's your name?");
+  const rating = await conversation.ask("Rate us:", [
+    [{ text: "👍", value: "up" }, { text: "👎", value: "down" }],
+  ]);
+  await conversation.send(`Thanks ${name}! (${rating})`);
+});
+
+function Home() {
+  return (
+    <Message text="Hi!">
+      <InlineKeyboard>
+        <Button text="Leave feedback" conversation={feedback} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+const bot = createBot({
+  adapter: new TelegramAdapter(),
+  component: Home,
+  plugins: [conversationsPlugin(), streamPlugin()],
+});
+
+if (import.meta.main) bot.start(); // long polling with TELEGRAM_BOT_TOKEN
+```
+
+<TelegramPreview bot="Feedback Bot" user="/start" text={"Hi!"} buttons={[["Leave feedback"]]} />
 
 ## Exports
 
-| Export | Kind | Description |
-| ------ | ---- | ----------- |
-| `TelegramAdapter` | class | Adapter passed to `createBot({ adapter })`. |
-| `serializeOutput` | function | Serialize a rendered output tree to a Telegram send payload. |
-| `conversationsPlugin` | plugin | Enables imperative async/await conversation flows. |
-| `defineConversation` | function | Declare a named conversation handler. |
-| `streamPlugin` | plugin | Enables token streaming into a message (`useStream`). |
-| `TelegramAdapterConfig`, `TelegramSendPayload` | types | Adapter options and payload shape. |
-| `Conversation`, `ConversationHandler`, `ConversationDef`, `ConversationsPluginOptions`, `ConversationsConfig`, `MediaGroupItem` | types | Conversation typings. |
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `TelegramAdapter` | class | `new TelegramAdapter(options?)` | The `Adapter` for `createBot({ adapter })`. |
+| `serializeOutput` | function | `(node: OutputNode) => TelegramSendPayload` | Convert a rendered tree into a Telegram send payload. |
+| `conversationsPlugin` | function | `(configOrDefs?: ConversationsConfig \| ConversationsPluginOptions) => TeactPlugin` | Register `@grammyjs/conversations` and every defined conversation. |
+| `defineConversation` | function | `(name: string, handlerOrDef: ConversationHandler \| ConversationDef) => string` | Register a named conversation; returns `name` for `<Button conversation>`. |
+| `streamPlugin` | function | `() => TeactPlugin` | Register `@grammyjs/stream` for native streaming in conversations. |
+| `TelegramAdapterConfig` | type | `{ token: string }` | Argument of `adapter.connect()` (supplied by `createBot`). |
+| `TelegramSendPayload` | type | object | Output of `serializeOutput`. |
+| `Conversation` | type | interface | The object passed to conversation handlers. |
+| `ConversationHandler` | type | `(conversation: Conversation) => Promise<void>` | A conversation function. |
+| `ConversationDef` | type | `{ handler: ConversationHandler; command?: string }` | A conversation with an optional starting command. |
+| `ConversationsPluginOptions` | type | `{ [name: string]: ConversationDef \| ConversationHandler }` | Named definitions. |
+| `ConversationsConfig` | type | `{ conversations?; exitActive? }` | Full plugin config. |
+| `MediaGroupItem` | type | `{ type: 'photo' \| 'video'; media; caption?; parse_mode? }` | Item for `conversation.replyWithMediaGroup`. |
 
-## Polling (default)
-
-`new TelegramAdapter()` reads the bot token from the environment (via `createBot`). Guard the
-polling call so it does not run when the module is imported (e.g. on edge):
+## TelegramAdapter
 
 ```ts
-import { createBot } from "@teactjs/core";
+new TelegramAdapter(options?: { client?: ApiClientOptions; botInfo?: UserFromGetMe });
+```
+
+<TypeTable
+  type={{
+    client: { type: 'ApiClientOptions (grammY)', description: 'API client options, e.g. { apiRoot: "http://localhost:8081" } for a local Bot API server or a fake API in tests.' },
+    botInfo: { type: 'UserFromGetMe (grammY)', description: 'The bot\'s own getMe result. When given, the getMe call on startup is skipped — worthwhile on serverless, where every cold isolate would otherwise make it.' },
+  }}
+/>
+
+```ts title="src/adapter.ts"
 import { TelegramAdapter } from "@teactjs/telegram";
 
-const bot = createBot({
-  component: App,
-  adapter: new TelegramAdapter(),
+export const adapter = new TelegramAdapter({
+  client: { apiRoot: "http://localhost:8081" },
+  botInfo: { id: 123, is_bot: true, first_name: "My Bot", username: "my_bot" /* … */ } as any,
 });
+```
 
+### Methods
+
+Besides the `Adapter` contract (`connect`, `on`, `send`, `edit`, `canEdit`, `clearButtons`,
+`setCommands`, `listen`, `disconnect`, `webhookCallback`), the adapter exposes:
+
+| Method | Description |
+| ------ | ----------- |
+| `getBot(): Bot` | The underlying grammY `Bot` (after `connect`). Throws `Adapter not connected` before. |
+| `use(...middlewares)` | Register grammY middleware between `connect()` and `listen()` — typically from a plugin's `onStart`. |
+| `off(event, handler)` | Remove a handler added with `on()`. |
+
+`connect()` creates the grammY `Bot`, installs `autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10, rethrowHttpErrors: true })`
+and a `bot.catch` that logs API errors (`[telegram] API error in chat …`), network errors and
+unexpected errors without crashing.
+
+### Running modes
+
+<Tabs items={['Polling', 'Webhook server', 'Serverless']}>
+<Tab value="Polling">
+
+```ts title="src/index.tsx"
+const bot = createBot({ router, adapter: new TelegramAdapter() });
 if (import.meta.main) bot.start();
 ```
 
-## Webhook / edge
+`listen({ polling: true })` calls `getMe` first through auto-retry, so a bad token or an unreachable
+Telegram makes `bot.start()` **reject within about a second** instead of hanging. Then it starts
+grammY long polling and logs `[telegram] Connected as @my_bot (My Bot)`.
 
-On serverless runtimes, call `bot.fetch(request, { token, secretToken })` from your handler instead
-of `start()`. The isolate freezes once the `Response` resolves, so pass plugins directly to
-`createBot({ plugins })` (the config file is not loaded on edge) and provide a durable
-`SessionStore`.
+</Tab>
+<Tab value="Webhook server">
+
+```ts title="src/index.tsx"
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  mode: "webhook",
+  webhook: {
+    domain: "https://bot.example.com",
+    port: 3000,          // default 3000
+    path: "/webhook",    // default "/webhook"
+    secretToken: process.env.WEBHOOK_SECRET,
+  },
+});
+bot.start();
+```
+
+Calls `setWebhook(domain + path, { secret_token })`, then serves `POST <path>` with a Node
+`http` server. Requests with a wrong `X-Telegram-Bot-Api-Secret-Token` get `401`, other paths `404`.
+A busy port rejects with `Port 3000 is already in use`.
+
+</Tab>
+<Tab value="Serverless">
+
+```ts title="src/worker.ts"
+import { bot } from "./bot";
+
+export default {
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
+};
+```
+
+`bot.fetch()` uses the adapter's `webhookCallback` (grammY's `std/http` handler): one update per
+request, no polling. Register the webhook URL yourself (`teact webhook set`) and run
+`bot.setCommands()` once after deploying.
+
+</Tab>
+</Tabs>
+
+## How output is sent
+
+`send(chatId, output)` serializes the tree with `serializeOutput` and picks the Bot API method from
+the content: `sendMessage`, `sendPhoto`, `sendDocument`, `sendVideo`, `sendAnimation`, `sendVoice`,
+`sendAudio`, `sendVideoNote`, `sendSticker`, `sendContact`, `sendLocation`, `sendVenue`,
+`sendMediaGroup` or `sendPoll`.
+
+- **Reply markup.** One per message: `ReplyKeyboardRemove` → reply keyboard → inline keyboard.
+- **Edits.** `canEdit()` is true only when the new output is a plain text message with no reply
+  keyboard or removal, *and* the last message sent to that chat was also text. `edit()` calls
+  `editMessageText` with the new inline keyboard (an empty keyboard when there is none) and ignores
+  `message is not modified`.
+- **Button presses.** The `callback_query:data` handler renders first, then answers the query with
+  the rendered `<Notification>` (`text`, `show_alert`), or with an empty answer to stop the spinner.
+  Expired queries (over 15 minutes) are ignored.
+- **Payments.** `pre_checkout_query` updates are answered `true` automatically.
+- **Context.** Each update maps to a `BotContext` with `user.languageCode` from Telegram's
+  `language_code` and `botUsername` from `ctx.me`; `raw` is the grammY `Context`.
+
+### serializeOutput
+
+```ts
+import { serializeOutput } from "@teactjs/telegram";
+
+const payload = serializeOutput({
+  type: "tg-message",
+  props: { text: "Hi <there>" },
+  children: [{ type: "tg-bold", props: {}, children: [{ type: "#text", props: { value: "!" }, children: [] }] }],
+});
+// { method: "sendMessage", parseMode: "HTML", text: "Hi &lt;there&gt;<b>!</b>" }
+```
+
+`TelegramSendPayload` has `method` plus the fields for that method (`text`, `photo`, `keyboard`,
+`replyKeyboard`, `removeKeyboard`, `notification`, `mediaGroup`, `poll*`, …). Use it in custom
+adapters or snapshot tests.
+
+<Callout type="info" title="Validation and limits">
+`serializeOutput` truncates message text over 4096 and captions over 1024 characters (with a
+warning), converts a one-item `MediaGroup` into a single photo/video, trims groups to 10 items, and
+warns about polls with fewer than 2 options or a quiz without a valid `correctOptionId`.
+</Callout>
 
 ## Conversations
 
-```ts
-import { conversationsPlugin, defineConversation } from "@teactjs/telegram";
+`conversationsPlugin()` wraps `@grammyjs/conversations`. In `onStart` it installs a grammY
+`session`, the `conversations()` middleware and one `createConversation` per definition — those from
+`defineConversation()` plus any passed to the plugin (same name: the plugin's wins).
 
-const onboarding = defineConversation("onboarding", async (convo) => {
-  const name = await convo.prompt("What's your name?");
-  await convo.send(`Welcome, ${name}!`);
+<TypeTable
+  type={{
+    conversations: { type: 'ConversationsPluginOptions', description: 'Named definitions, { name: handler | { handler, command } }.' },
+    exitActive: { type: 'boolean', description: 'Exit any active conversation before entering a new one (prevents "already in a conversation").', default: 'true' },
+  }}
+/>
+
+You can also pass the definitions map directly: `conversationsPlugin({ feedback: handler })`.
+
+A conversation starts when:
+
+- a `<Button conversation="name" />` is pressed (callback data `__convo:name`), or
+- its `command` is sent, e.g. `defineConversation("signup", { command: "signup", handler })`.
+
+### The Conversation object
+
+| Member | Signature | Description |
+| ------ | --------- | ----------- |
+| `prompt` | `(text, opts?: { validate? }) => Promise<string>` | Send `text`, wait for a text reply; on validation failure re-sends `⚠️ <error>` + `text`. |
+| `wait` | `(opts?: { validate? }) => Promise<string>` | Wait for the next text message; on failure replies `⚠️ <error>` and waits again. |
+| `ask` | `(text, options: (string \| { text, value })[][]) => Promise<string>` | Inline buttons; resolves the chosen `value` and answers the callback. |
+| `send` | `(text) => Promise<void>` | Send a message without waiting. |
+| `stream` | `(source: AsyncIterable<string>) => Promise<void>` | Live-updating message. Uses `replyWithStream` when `streamPlugin` is installed, else send + edits every 500 ms. |
+| `requestContact` | `(promptText, buttonText = '📱 Share Contact') => Promise<{ phone_number, first_name, last_name?, user_id? }>` | One-time contact keyboard; removes it afterwards with a `✓` message. |
+| `requestLocation` | `(promptText, buttonText = '📍 Share Location') => Promise<{ latitude, longitude }>` | One-time location keyboard; removes it afterwards. |
+| `replyWithPhoto` / `Video` / `Animation` / `Voice` / `Audio` / `VideoNote` / `Sticker` / `Document` | `(src, opts?) => Promise<void>` | Media senders with Bot API option names (`caption`, `parse_mode`, …). |
+| `replyWithContact` | `(phoneNumber, firstName, opts?) => Promise<void>` | Contact card. |
+| `replyWithLocation` | `(latitude, longitude, opts?) => Promise<void>` | Location. |
+| `replyWithVenue` | `(latitude, longitude, title, address, opts?) => Promise<void>` | Venue. |
+| `replyWithMediaGroup` | `(media: MediaGroupItem[]) => Promise<void>` | Album. |
+| `replyWithPoll` | `(question, options: string[], opts?) => Promise<void>` | Poll. |
+| `chatId`, `api`, `chat` | | Chat id, grammY API and chat object. |
+| `raw` | `{ conversation, ctx }` | The grammY conversation and context. |
+
+`validate` is a function returning `true | "error"` or any schema with `.safeParse()` (Zod,
+Standard Schema).
+
+```ts title="src/conversations/signup.ts"
+import { defineConversation } from "@teactjs/telegram";
+import { z } from "zod";
+
+export const signup = defineConversation("signup", {
+  command: "signup",
+  handler: async (c) => {
+    const email = await c.prompt("Your email?", { validate: z.string().email() });
+    const plan = await c.ask("Pick a plan:", [["Free", "Pro"]]);
+    const { phone_number } = await c.requestContact("Share your phone so we can reach you.");
+    await c.send(`Done: ${email}, ${plan}, ${phone_number}`);
+  },
 });
-
-// createBot({ plugins: [conversationsPlugin()] })
 ```
 
-## Streaming
+<Callout type="warn" title="Long-lived processes only">
+Conversation state lives in grammY's in-memory session. Run conversations in polling or webhook-server
+mode, not on serverless `bot.fetch()`, where each request may hit a fresh isolate. For flows that
+must survive restarts, use `useConversation` / `useForm` from `@teactjs/core` with a durable session
+store.
+</Callout>
+
+## streamPlugin
 
 ```ts
-import { streamPlugin } from "@teactjs/telegram";
-// createBot({ plugins: [streamPlugin()] }) — then useStream() in a component
+createBot({ plugins: [conversationsPlugin(), streamPlugin()] });
 ```
 
-See the [Telegram adapter guide](/docs/guides/telegram-adapter) for polling vs webhook setup, the
-[Conversations guide](/docs/guides/conversations), and the [Streaming guide](/docs/guides/streaming).
+Registers `@grammyjs/stream` so `conversation.stream()` uses Telegram's native streaming. Auto-retry
+is already installed by the adapter, so the plugin does not add it again. Component-side streaming
+(`useStream` from `@teactjs/core`) does not need this plugin.
+
+## Related
+
+<Cards>
+  <Card title="Telegram adapter guide" href="/docs/guides/telegram-adapter" description="Polling vs webhook, options and raw grammY access." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Serverless, webhook server and command registration." />
+  <Card title="Conversations" href="/docs/guides/conversations" description="Component and imperative conversation flows." />
+  <Card title="Streaming" href="/docs/guides/streaming" description="useStream and conversation.stream." />
+</Cards>

@@ -17,6 +17,7 @@
     "i18n",
     "payments",
     "storage",
+    "databases",
     "middleware-plugins",
     "telegram-adapter",
     "testing",

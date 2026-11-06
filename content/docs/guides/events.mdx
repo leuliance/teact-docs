@@ -1,51 +1,288 @@
 ---
 title: Events
-description: useOn and useEventData for Telegram updates — messages, callbacks, payments, and wildcards.
+description: React to what users send — photos, contacts, locations, documents, service messages and button presses — with useOn and useEventData, and know which Telegram updates reach your components.
 ---
 
+Most bots react to text and button presses through screens and handlers. Users can also send
+photos, files, voice notes, contacts and locations, and groups produce service messages such as
+"new member joined". `useEventData` and `useOn` from `@teactjs/core` let a component read those
+updates:
 
-Both hooks come from **`@teactjs/core`**. Use them to react to raw Telegram
-updates that don't map cleanly to a screen.
+- **`useEventData(event)`** returns the event's data during render, or `null`. Use it to decide
+  what to show.
+- **`useOn(event, handler)`** runs a callback after the render, once per matching update. Use it
+  for side effects: logging, replying, navigating.
+
+## A first example
+
+```tsx title="src/screens/Avatar.tsx"
+import { useEventData } from "@teactjs/core";
+import { Message, Photo, InlineKeyboard, Button } from "@teactjs/ui";
+
+type PhotoSize = { file_id: string; width: number; height: number };
+
+export function Avatar() {
+  const sizes = useEventData<PhotoSize[]>("photo");
+
+  if (sizes) {
+    const largest = sizes[sizes.length - 1];
+    return (
+      <Photo src={largest.file_id} caption={`Looking good! ${largest.width}×${largest.height}`}>
+        <InlineKeyboard>
+          <Button text="✅ Use as avatar" route="/profile" />
+        </InlineKeyboard>
+      </Photo>
+    );
+  }
+
+  return <Message text="📷 Send me a photo to use as your avatar." />;
+}
+```
+
+<TelegramPreview text="📷 Send me a photo to use as your avatar." />
+
+<TelegramPreview user="[photo]" text={"[photo]\nLooking good! 1280×960"} buttons={[["✅ Use as avatar"]]} caption="After the user sends a photo" />
+
+A `file_id` Telegram gave you can be sent back as `src`, so no upload is needed.
+
+## How events reach a component
+
+Every message the user sends is an update. Teact re-renders the chat's **current screen** with
+that update, so whichever screen is mounted can read it with `useEventData` or `useOn`. A
+component that doesn't use the event simply renders as usual.
+
+<Callout type="info" title="Each incoming message re-sends the screen">
+  Because an incoming message re-renders the current screen, and messages are answered with a new
+  message (not an edit), the screen is sent again below whatever the user sent. Design screens that
+  accept input so their output makes sense as a reply. For updates you want to handle without
+  rendering, use [middleware](#handling-events-in-middleware).
+</Callout>
+
+### Which updates are forwarded
+
+The Telegram adapter forwards two kinds of updates to Teact:
+
+- **Messages**: text, media, contacts, locations, polls, dice, games, Mini App data, successful
+  payments and service messages such as `new_chat_members`.
+- **Button presses** (`callback_query` with data).
+
+Other update types are not forwarded to components. The `TelegramEvent` type still lists
+`poll_answer`, `inline_query` and `pre_checkout_query`, but with the Telegram adapter they never
+match. Edited messages are not forwarded either. Pre-checkout queries are answered automatically
+by the adapter (see [Payments](/docs/guides/payments)).
+
+## Event reference
+
+`useOn` and `useEventData` take a `TelegramEvent`. Each name maps to a field of the update; the
+hook receives that field's value (Telegram's snake_case JSON):
+
+| Event | Data | Notes |
+| --- | --- | --- |
+| `message` | The whole message | Any message |
+| `text` | The whole message | Only when it has text |
+| `photo` | `PhotoSize[]` | Smallest first; the last entry is the largest |
+| `video`, `animation`, `video_note` | `Video`, `Animation`, `VideoNote` | |
+| `audio`, `voice` | `Audio`, `Voice` | |
+| `document` | `Document` | `file_name`, `mime_type`, `file_id`, … |
+| `sticker` | `Sticker` | |
+| `contact` | `Contact` | `phone_number`, `first_name`, `user_id?`, … |
+| `location` | `Location` | `latitude`, `longitude` |
+| `venue` | `Venue` | |
+| `poll` | `Poll` | A poll the user sent |
+| `dice`, `game` | `Dice`, `Game` | |
+| `web_app_data` | `WebAppData` | Data sent from a Mini App keyboard button |
+| `new_chat_members` | `User[]` | Groups |
+| `left_chat_member` | `User` | Groups |
+| `successful_payment` | `SuccessfulPayment` | See [Payments](/docs/guides/payments) |
+| `callback_query` | The callback query | Button presses |
+| `*` | The whole update context | Every update |
+| `poll_answer`, `inline_query`, `pre_checkout_query` | | Not forwarded by the Telegram adapter |
+
+## useEventData
+
+```ts
+function useEventData<T = any>(event: TelegramEvent): T | null;
+```
+
+Reads the current update during render. It returns `null` when the update isn't that event, so the
+same component shows its normal screen the rest of the time.
+
+### Read a shared contact
+
+```tsx title="src/screens/ContactDemo.tsx"
+import { useEventData } from "@teactjs/core";
+import { Message, InlineKeyboard, Button, ReplyKeyboard, ReplyRow, RequestContactButton, ReplyKeyboardRemove } from "@teactjs/ui";
+
+export function ContactDemo() {
+  const contact = useEventData<{ phone_number: string; first_name: string }>("contact");
+
+  if (contact) {
+    return (
+      <Message text={`✅ Got it!\n\n📱 ${contact.phone_number}\n👤 ${contact.first_name}`}>
+        <ReplyKeyboardRemove />
+      </Message>
+    );
+  }
+
+  return (
+    <Message text="📱 Tap the button below to share your number.">
+      <ReplyKeyboard resizeKeyboard oneTimeKeyboard>
+        <ReplyRow>
+          <RequestContactButton text="📱 Share my contact" />
+        </ReplyRow>
+      </ReplyKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text="📱 Tap the button below to share your number." replyKeyboard={[["📱 Share my contact"]]} />
+
+<TelegramPreview user="[contact]" text={"✅ Got it!\n\n📱 +15550100\n👤 Ada"} caption="After sharing" />
+
+Check `contact.user_id === Number(useBot().userId)` if you need to know the user shared their
+**own** contact rather than forwarding someone else's.
 
 ## useOn
 
-Subscribe to an update type:
+```ts
+function useOn(event: TelegramEvent, handler: (data: any, ctx: EventContext) => void): void;
+```
+
+Registers a handler that runs in an effect after the render commits, once per matching update
+(repeated renders of the same update don't call it twice). The latest `handler` is always used, so
+it can read current props and state.
+
+<TypeTable
+  type={{
+    navigate: { type: '(path: string, opts?: NavigateOptions) => void', description: 'Router navigation. Does nothing outside a router.' },
+    reply: { type: '(text: string) => Promise<void>', description: 'Send a plain-text message to the chat, outside the render tree.' },
+    chatId: { type: 'string', description: 'Current chat.' },
+    userId: { type: 'string', description: 'Sender.' },
+    user: { type: '{ id: string; username?: string; firstName?: string }', description: 'Sender details.' },
+    raw: { type: 'any', description: 'The grammY context.' },
+  }}
+/>
 
 ```tsx
 import { useOn } from "@teactjs/core";
 
-useOn("message:text", (ctx) => {
-  console.log("Text:", ctx.raw);
+useOn("document", (doc, ctx) => {
+  console.log(`📎 ${ctx.user.firstName} sent ${doc.file_name} (${doc.mime_type})`);
+});
+
+useOn("location", (loc, ctx) => {
+  ctx.navigate(`/stores/near/${loc.latitude.toFixed(3)}/${loc.longitude.toFixed(3)}`);
 });
 ```
 
-## useEventData
+<Callout type="warn" title="Pick one mechanism per event">
+  `useOn` runs after the screen rendered. If its handler also changes what the screen shows (by
+  setting state or navigating), the screen renders a second time for the same update. Read data
+  for the UI with `useEventData`, and keep `useOn` for side effects.
+</Callout>
 
-Read the latest payload for an event type:
+## Handling events in middleware
 
-```tsx
-import { useEventData } from "@teactjs/core";
+Middleware sees every forwarded update before any component renders, and can stop it with
+`halt(ctx)`. On Telegram, `ctx.raw` is the grammY context:
 
-const photo = useEventData("message:photo");
+```ts title="src/middleware/files.ts"
+import { halt, type Middleware } from "@teactjs/core";
+
+export const archiveFiles: Middleware = async (ctx) => {
+  const doc = ctx.raw?.message?.document;
+  if (!doc) return; // not a file: continue as usual
+
+  await saveFile(ctx.userId, doc.file_id, doc.file_name);
+  await ctx.raw.reply(`🗂 Saved ${doc.file_name}.`);
+  halt(ctx); // don't re-render the current screen
+};
 ```
 
-## Common event keys
+Use middleware for bot-wide behaviour (archiving, moderation, analytics) and the hooks for
+behaviour that belongs to one screen. See [Middleware & plugins](/docs/guides/middleware-plugins).
 
-- `message`, `message:text`, `message:photo`, …
-- `callback_query`
-- `pre_checkout_query`, `successful_payment`
-- `*` — all events (use sparingly)
+## Recipes
 
-<Callout type="warn">
-  Raw Telegram update fields are **snake_case** — e.g. `callback_query`,
-  `pre_checkout_query`, `successful_payment`. Match those names exactly, not
-  camelCase.
-</Callout>
+### Nearest store from a shared location
 
-<Callout type="info">
-  On serverless/edge, an effect scheduled by `useOn` that runs **after** the first
-  commit won't survive the isolate freeze — fine for long-running polling. See
-  [Streaming](/docs/guides/streaming).
-</Callout>
+```tsx title="src/screens/StoreFinder.tsx"
+import { useEventData } from "@teactjs/core";
+import { Message, Location, ReplyKeyboard } from "@teactjs/ui";
+import { nearestStore } from "../stores";
 
-Pair with [Hooks](/docs/guides/hooks) for chat id, text, and command accessors.
+export function StoreFinder() {
+  const here = useEventData<{ latitude: number; longitude: number }>("location");
+
+  if (here) {
+    const store = nearestStore(here.latitude, here.longitude);
+    return <Location.Venue latitude={store.lat} longitude={store.lng} title={store.name} address={store.address} />;
+  }
+
+  return (
+    <Message text="Share your location and I'll find the nearest store.">
+      <ReplyKeyboard oneTimeKeyboard>
+        <ReplyKeyboard.RequestLocation text="📍 Send my location" />
+      </ReplyKeyboard>
+    </Message>
+  );
+}
+```
+
+### Welcome new group members
+
+```tsx
+function GroupHome() {
+  const joined = useEventData<{ first_name: string }[]>("new_chat_members");
+  if (joined) {
+    return <Message text={`👋 Welcome, ${joined.map((u) => u.first_name).join(", ")}!`} />;
+  }
+  return <Message text="Send /help to see what I can do." />;
+}
+```
+
+### Data from a Mini App
+
+A Mini App opened from a reply keyboard can send data back with `Telegram.WebApp.sendData()`. It
+arrives as a message:
+
+```tsx
+const data = useEventData<{ data: string; button_text: string }>("web_app_data");
+if (data) {
+  const order = JSON.parse(data.data) as { items: string[] };
+  return <Message text={`🛒 ${order.items.length} items received.`} />;
+}
+```
+
+### Log every update during development
+
+```tsx
+useOn("*", (raw, ctx) => {
+  const what = raw?.message?.text ?? raw?.callbackQuery?.data ?? "(other)";
+  console.log(`[update] ${ctx.user.firstName}: ${what}`);
+});
+```
+
+For production logging, prefer a middleware or the logger plugin, which see updates even when no
+component listens.
+
+## Gotchas
+
+- **Snake_case data.** Event data is Telegram's raw JSON: `phone_number`, `file_id`,
+  `new_chat_members`.
+- **Effects and serverless.** `useOn` handlers run after the commit. On serverless, work they start
+  that renders again (navigation, state) happens after the response and is lost. `useEventData`
+  has no such problem: it is read during the render.
+- **Only the mounted screen sees the event.** If the user sends a photo while a different screen
+  is showing, the avatar screen above never sees it. Guide users to the right screen first, or
+  handle the event in middleware.
+
+## Related
+
+<Cards>
+  <Card title="Hooks" href="/docs/guides/hooks" description="All hooks, including useText and useCallbackData." />
+  <Card title="Components" href="/docs/guides/components" description="Request buttons and reply keyboards that produce events." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="Handle updates before rendering." />
+  <Card title="Payments" href="/docs/guides/payments" description="successful_payment and the checkout flow." />
+</Cards>

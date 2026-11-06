@@ -1,35 +1,31 @@
 ---
 title: "@teactjs/storage"
-description: storagePlugin, useStorage, useGlobalStorage, and the StorageDriver interface with built-in memory and file drivers.
+description: API reference for storagePlugin, useStorage, useGlobalStorage, useStorageBackend, the sync and async driver interfaces, the memory and file drivers, createSessionStore and the driver conformance suite.
 ---
 
+`@teactjs/storage` gives Teact bots persistent key/value state. Register `storagePlugin` once, then
+read and write values from any component with `useStorage` — it works like `useState`, but survives
+restarts and is scoped to the chat. It ships memory and JSON-file drivers, the async driver
+interface every database package implements, `createSessionStore` for durable sessions, and a
+conformance suite for driver authors.
 
-Persistent key/value storage for Teact bots. Register `storagePlugin` once, then read and write
-state from any component with `useStorage`, or reach the raw driver with `useGlobalStorage`.
-
-```bash
-bun add @teactjs/storage
+```npm
+npm i @teactjs/storage @teactjs/core react
 ```
 
-## Exports
+`@teactjs/core` and `react` are peer dependencies. For a database backend, add one of the
+[database packages](#database-packages).
 
-| Export | Kind | Description |
-| ------ | ---- | ----------- |
-| `storagePlugin` | plugin | Registers a storage driver on the bot. |
-| `useStorage` | hook | `useStorage<T>(key, defaultValue)` → `[value, setValue]`, reactive per key. |
-| `useGlobalStorage` | hook | Returns the underlying `StorageDriver` for manual reads/writes. |
-| `MemoryDriver` | class | In-memory driver (default; data is lost on restart). |
-| `FileDriver` | class | JSON-file driver that persists to disk. |
-| `StorageDriver` | type | Interface for writing a custom driver. |
-| `StoragePluginOptions` | type | Options for `storagePlugin`. |
+**When to use**
 
-## Register the plugin
+- A screen needs state that outlives one conversation turn or a restart (favourites, settings, a
+  cart).
+- You want durable sessions (`createSessionStore`) on any backend.
+- You are writing a custom driver and want the shared conformance tests.
 
-`storagePlugin({ driver, path })` — `driver` is `'memory'` (default), `'file'`, or a custom
-`StorageDriver`. For the `file` driver, `path` is a **JSON file**, not a directory:
+## Quick example
 
-```ts
-// teact.config.ts
+```ts title="teact.config.ts"
 import { defineConfig } from "@teactjs/core";
 import { storagePlugin } from "@teactjs/storage";
 
@@ -38,21 +34,142 @@ export default defineConfig({
 });
 ```
 
-## Read and write state
-
-`useStorage` is reactive per key — updating it re-renders the component:
-
-```tsx
+```tsx title="src/screens/Favorites.tsx"
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 import { useStorage } from "@teactjs/storage";
 
-const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
+export function Favorites() {
+  const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
+  return (
+    <Message text={favorites.length ? `Favourites: ${favorites.join(", ")}` : "No favourites yet"}>
+      <InlineKeyboard>
+        <Button text="Add Pikachu" onClick={() => setFavorites((prev) => [...prev, "Pikachu"])} />
+        <Button text="Clear" variant="destructive" onClick={() => setFavorites([])} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
 ```
 
-`useGlobalStorage()` returns the driver itself: `get`, `set`, `delete`, `has`, `keys`, `clear`.
+<TelegramPreview bot="Dex Bot" user="/favorites" text={"Favourites: Pikachu"} buttons={[["Add Pikachu"], ["✕ Clear"]]} edited />
 
-## StorageDriver interface
+## Exports
 
-A driver implements six synchronous methods:
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `storagePlugin` | function | `(opts?: StoragePluginOptions) => TeactPlugin` | Register a storage driver on the bot (plugin name `teact-storage`). |
+| `useStorage` | hook | `<T>(key: string, defaultValue: T) => [T, (value: T \| ((prev: T) => T)) => void]` | Chat-scoped persisted state. |
+| `useGlobalStorage` | hook | `() => StorageDriver` | Synchronous driver not scoped to a chat. |
+| `useStorageBackend` | hook | `() => AnyStorageDriver` | The driver exactly as passed to `storagePlugin` (sync or async). |
+| `createSessionStore` | function | `(driver: AnyStorageDriver, opts?: CreateSessionStoreOptions) => SessionStore` | Turn any driver into a session store. |
+| `MemoryDriver` | class | `new MemoryDriver()` | In-memory sync driver (default; lost on restart). |
+| `FileDriver` | class | `new FileDriver(path: string)` | JSON-file sync driver with atomic writes. |
+| `CachedDriver` | class | `new CachedDriver(backend: AsyncStorageDriver)` | The per-update synchronous cache over an async driver. |
+| `isAsyncDriver` | function | `(driver: unknown) => driver is AsyncStorageDriver` | `true` when `driver.async === true`. |
+| `MemoryAsyncDriver` | class | `new MemoryAsyncDriver()` | In-memory async driver with `ttl` and `incr`, for tests and as a reference. |
+| `runDriverConformance` | function | `(name, make, opts: DriverConformanceOptions) => void` | Shared behaviour tests for async drivers. |
+
+Types: `StorageDriver`, `AsyncStorageDriver`, `AnyStorageDriver`, `SetOptions`,
+`StoragePluginOptions`, `CreateSessionStoreOptions`, `DriverConformanceOptions`.
+
+## storagePlugin
+
+<TypeTable
+  type={{
+    driver: { type: "'memory' | 'file' | StorageDriver | AsyncStorageDriver", description: 'Backend. A driver object is used as is; "file" creates a FileDriver at path.', default: "'memory'" },
+    path: { type: 'string', description: 'For the "file" driver: a JSON file, not a directory.', default: "'.teact/storage.json'" },
+    preload: { type: 'string[]', description: 'Async drivers only: extra key prefixes loaded before every update, e.g. ["global:"].', default: '[]' },
+  }}
+/>
+
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver } from "@teactjs/redis";
+import Redis from "ioredis";
+
+export default defineConfig({
+  plugins: [
+    storagePlugin({
+      driver: new RedisDriver({ client: new Redis(process.env.REDIS_URL!) }),
+      preload: ["global:"],
+    }),
+  ],
+});
+```
+
+On `bot.stop()`, a sync driver with a `flush()` method (like `FileDriver`) is flushed; for async
+drivers every chat's pending writes are flushed and then `driver.close?.()` is called.
+
+## Hooks
+
+### useStorage
+
+```ts
+function useStorage<T>(key: string, defaultValue: T): [T, (value: T | ((prev: T) => T)) => void];
+```
+
+- The stored key is `<platform>:<chatId>:<key>`, so every chat has its own value.
+- The value is read through the driver on every render, so a value written by another instance or
+  another handler shows up on the next render.
+- The setter accepts a value or an updater `(prev) => next`; `prev` is the stored value, or
+  `defaultValue` when missing.
+- Throws `useStorage requires the storagePlugin to be registered` without the plugin.
+
+### useGlobalStorage
+
+Returns a `StorageDriver` (`get`, `set`, `delete`, `has`, `keys`, `clear`) with unscoped keys —
+for data shared by every chat.
+
+```tsx
+const store = useGlobalStorage();
+const total = store.get<number>("global:signups") ?? 0;
+```
+
+With an async driver this is a synchronous view over the per-update cache: it only sees the current
+chat's keys and the `preload` prefixes, and `clear()` only clears those prefixes.
+
+### useStorageBackend
+
+Returns the driver passed to `storagePlugin` — use it for queries outside the cache, typically in
+`useQuery`:
+
+```tsx title="src/screens/Leaderboard.tsx"
+import { useQuery } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { useStorageBackend } from "@teactjs/storage";
+
+export function Leaderboard() {
+  const backend = useStorageBackend();
+  const { data } = useQuery({
+    key: "leaderboard",
+    fn: async () => {
+      const keys = await backend.keys("leaderboard:");
+      return Promise.all(keys.map(async (k) => [k, await backend.get<number>(k)] as const));
+    },
+  });
+  return <Message text={data ? data.map(([k, v]) => `${k.slice(12)}: ${v}`).join("\n") : "Loading…"} />;
+}
+```
+
+## Sync and async drivers
+
+**Sync drivers** (`MemoryDriver`, `FileDriver`, [`SqliteDriver`](/docs/packages/sqlite)) are read
+and written directly during render.
+
+**Async drivers** (Redis, Postgres, MongoDB, KV, D1) are wrapped so `useStorage` stays synchronous:
+
+1. Before each update, the plugin's middleware creates a fresh `CachedDriver` and loads the current
+   chat's keys (`<platform>:<chatId>:`) with one `entries()` call, plus every `preload` prefix.
+   Caches are never shared between chats.
+2. Components read from that cache; `set` and `delete` update it immediately and queue the write.
+3. Every queued write is awaited before the update finishes, so writes are durable on serverless,
+   where the isolate freezes after the response. The first write error is rethrown.
+
+A setter captured by an earlier render (an `onClick` handler runs at the start of the next update)
+writes into the update that is actually running and is flushed with it.
+
+## Driver interfaces
 
 ```ts
 interface StorageDriver {
@@ -63,19 +180,181 @@ interface StorageDriver {
   clear(): void;
   keys(): string[];
 }
+
+interface AsyncStorageDriver {
+  readonly async: true;
+  get<T>(key: string): Promise<T | undefined>;
+  set<T>(key: string, value: T, opts?: SetOptions): Promise<void>;
+  delete(key: string): Promise<void>;
+  has(key: string): Promise<boolean>;
+  keys(prefix?: string): Promise<string[]>;
+  clear(prefix?: string): Promise<void>;
+  entries?(prefix: string): Promise<Array<[string, unknown]>>;
+  incr?(key: string, by?: number, opts?: SetOptions): Promise<number>;
+  close?(): Promise<void>;
+}
+
+type AnyStorageDriver = StorageDriver | AsyncStorageDriver;
 ```
 
-Pass an instance as `driver` to plug in any backend (Redis, SQLite, Supabase, …):
+<TypeTable
+  type={{
+    'async': { type: 'true', description: 'Marker the plugin uses to tell async from sync drivers.', required: true },
+    'keys(prefix?)': { type: 'Promise<string[]>', description: 'Keys, optionally only those starting with prefix (matched literally, no LIKE/glob).' },
+    'clear(prefix?)': { type: 'Promise<void>', description: 'Remove keys under prefix, or every key.' },
+    'entries(prefix)': { type: 'Promise<Array<[string, unknown]>>', description: 'Optional. One query for all pairs under prefix; the fallback is keys() + one get per key.' },
+    'incr(key, by = 1, opts?)': { type: 'Promise<number>', description: 'Optional atomic counter. Missing or expired key counts as 0; ttl applies only when the key is created.' },
+    'close()': { type: 'Promise<void>', description: 'Optional. Called from the plugin\'s onStop.' },
+  }}
+/>
 
-```ts
-import { RedisDriver } from "@teactjs/storage-redis";
-storagePlugin({ driver: new RedisDriver({ url: "redis://localhost:6379" }) });
-```
+`SetOptions` is `{ ttl?: number }` — milliseconds. `0`, negative or no `ttl` means the entry never
+expires; the database drivers also treat `NaN` and `Infinity` that way.
 
-<Callout type="warn">
-On edge runtimes there is no filesystem: the `'file'` driver warns and degrades to memory, which
-does **not** persist across isolate freezes. Provide a driver backed by durable async storage (KV,
-Redis, a DB) instead.
+`incr` is implemented by the Redis, Postgres, SQLite, D1 and MongoDB drivers and by
+`MemoryAsyncDriver`; `KVDriver` does not have it, because KV has no atomic primitive. The fixed-window
+`rateLimit` and `analytics` from [`@teactjs/plugins`](/docs/packages/plugins) use it to stay exact
+across instances.
+
+The built-in database drivers only close a client **you passed in** when you opt in with
+`closeClient: true`; by default you own its lifecycle.
+
+## Built-in drivers
+
+### MemoryDriver
+
+A `Map`. The default; data is lost on restart. Fine for development and tests.
+
+### FileDriver
+
+`new FileDriver(path)` loads the JSON file on construction and writes the whole object on every
+`set`, `delete` and `clear`. Writes are synchronous and atomic (temp file `<path>.<pid>.tmp` +
+rename), and missing directories are created. A corrupt file is logged and the store starts empty.
+`flush()` persists explicitly.
+
+<Callout type="warn" title="No filesystem on the edge">
+On Cloudflare Workers and similar runtimes, `FileDriver` warns and keeps data in memory only, which
+does **not** persist across isolates. Use an edge-capable package — D1 or KV via
+`@teactjs/cloudflare`, Upstash via `@teactjs/redis`, or Neon via `@teactjs/postgres`.
 </Callout>
 
-See the [Storage guide](/docs/guides/storage) for driver patterns and the edge caveat in full.
+### MemoryAsyncDriver
+
+An `AsyncStorageDriver` over a `Map` that honours `ttl`, implements `incr` and `entries`, and
+`structuredClone`s values in and out (so it behaves like a real serializing backend). Use it in tests
+of async-only code paths, or as a template for your own driver.
+
+### CachedDriver
+
+`new CachedDriver(backend)` exposes `hydrate(prefix)` (replace cached entries under `prefix` from the
+backend), `flush()` (await every queued write; rethrow the first error) and the `StorageDriver`
+methods. `clear()` clears only hydrated prefixes, never the whole backend. `storagePlugin` uses it
+internally; you rarely construct one yourself.
+
+## createSessionStore
+
+<TypeTable
+  type={{
+    prefix: { type: 'string', description: 'Key prefix for session entries.', default: "'session:'" },
+    ttl: { type: 'number', description: 'Session lifetime in ms, passed as SetOptions to drivers that support TTL (async drivers and SqliteDriver).' },
+  }}
+/>
+
+```ts title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { createSessionStore, FileDriver } from "@teactjs/storage";
+
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  session: {
+    store: createSessionStore(new FileDriver(".teact/sessions.json"), { ttl: 7 * 24 * 3600_000 }),
+  },
+});
+```
+
+Each database package ships a ready-made store built on it (`redisSessionStore`,
+`postgresSessionStore`, `sqliteSessionStore`, `mongoSessionStore`, `d1SessionStore`,
+`kvSessionStore`).
+
+## Writing a driver
+
+```ts title="src/my-driver.ts"
+import type { AsyncStorageDriver, SetOptions } from "@teactjs/storage";
+
+export class HttpKvDriver implements AsyncStorageDriver {
+  readonly async = true as const;
+  constructor(private base: string) {}
+
+  async get<T>(key: string) {
+    const r = await fetch(`${this.base}/${encodeURIComponent(key)}`);
+    return r.ok ? ((await r.json()) as T) : undefined;
+  }
+  async set<T>(key: string, value: T, opts?: SetOptions) {
+    const ttl = opts?.ttl && opts.ttl > 0 ? `?ttl=${opts.ttl}` : "";
+    await fetch(`${this.base}/${encodeURIComponent(key)}${ttl}`, { method: "PUT", body: JSON.stringify(value) });
+  }
+  async delete(key: string) {
+    await fetch(`${this.base}/${encodeURIComponent(key)}`, { method: "DELETE" });
+  }
+  async has(key: string) {
+    return (await this.get(key)) !== undefined;
+  }
+  async keys(prefix = "") {
+    return (await fetch(`${this.base}?prefix=${encodeURIComponent(prefix)}`)).json();
+  }
+  async clear(prefix = "") {
+    await Promise.all((await this.keys(prefix)).map((k: string) => this.delete(k)));
+  }
+}
+```
+
+### runDriverConformance
+
+```ts title="test/my-driver.test.ts"
+import { describe, test, expect } from "bun:test";
+import { runDriverConformance } from "@teactjs/storage";
+import { HttpKvDriver } from "../src/my-driver";
+
+runDriverConformance("HttpKvDriver", () => new HttpKvDriver("http://localhost:8787"), {
+  describe,
+  test,
+  expect,
+  skipTtl: true,
+});
+```
+
+<TypeTable
+  type={{
+    describe: { type: '(name: string, fn: () => void) => void', description: 'Your test runner\'s describe.', required: true },
+    test: { type: '(name: string, fn: () => any) => void', description: 'Your test runner\'s test.', required: true },
+    expect: { type: '(value: unknown) => any', description: 'Your test runner\'s expect (toBe, toEqual, toBeUndefined).', required: true },
+    skipTtl: { type: 'boolean', description: 'Skip TTL timing tests for backends that cannot expire keys quickly in-process.' },
+  }}
+/>
+
+The suite checks: the `async` marker; missing keys; JSON round-trips (strings, numbers, `0`,
+booleans, `null`, arrays, nested objects); overwrite and delete; `keys`/`entries` prefix filtering;
+literal matching of `%`, `_`, `*`, `?`, `[` in prefixes; `clear(prefix)` vs `clear()`; `ttl <= 0`
+never expiring; `incr` atomicity under 20 concurrent calls and keeping the first `ttl`; and `ttl`
+expiry. `make` must return a fresh, empty driver each time.
+
+## Database packages
+
+| Package | Driver | Kind | Runtime |
+| ------- | ------ | ---- | ------- |
+| [@teactjs/redis](/docs/packages/redis) | `RedisDriver` | async | Long-running; edge with Upstash |
+| [@teactjs/postgres](/docs/packages/postgres) | `PostgresDriver` | async | Long-running; edge with Neon HTTP |
+| [@teactjs/sqlite](/docs/packages/sqlite) | `SqliteDriver` | sync | Long-running only |
+| [@teactjs/mongodb](/docs/packages/mongodb) | `MongoDriver` | async | Long-running / Node serverless |
+| [@teactjs/cloudflare](/docs/packages/cloudflare) | `D1Driver`, `KVDriver` | async | Cloudflare Workers |
+
+## Related
+
+<Cards>
+  <Card title="Storage guide" href="/docs/guides/storage" description="Patterns for chat and global state." />
+  <Card title="Databases guide" href="/docs/guides/databases" description="Choosing a backend and writing drivers." />
+  <Card title="@teactjs/redis" href="/docs/packages/redis" description="Redis driver, sessions and plugin." />
+  <Card title="@teactjs/cloudflare" href="/docs/packages/cloudflare" description="D1 and KV on Workers." />
+</Cards>

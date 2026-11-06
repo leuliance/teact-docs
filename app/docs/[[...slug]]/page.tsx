@@ -22,16 +22,27 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const markdownUrl = getPageMarkdownUrl(page).url;
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
-        <ViewOptionsPopover
-          markdownUrl={markdownUrl}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/teact-docs/content/docs/${page.path}`}
-        />
-      </div>
+    <DocsPage toc={page.data.toc} full={page.data.full} tableOfContent={{ style: 'clerk' }}>
+      <header className="not-prose mb-2 border-b-2 border-ink pb-6">
+        <DocsTitle className="text-[2.125rem] font-extrabold leading-[1.05] tracking-[-0.03em] [font-stretch:110%] sm:text-[2.625rem]">
+          {page.data.title}
+        </DocsTitle>
+        {page.data.description && (
+          <DocsDescription className="mb-0 mt-3 max-w-[62ch] text-lg leading-relaxed text-ink-soft">
+            {page.data.description}
+          </DocsDescription>
+        )}
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <span className="border border-rule bg-kraft-tint px-2 py-1 font-mono text-[0.6875rem] text-ink-soft">
+            {page.path}
+          </span>
+          <MarkdownCopyButton markdownUrl={markdownUrl} />
+          <ViewOptionsPopover
+            markdownUrl={markdownUrl}
+            githubUrl={`https://github.com/${gitConfig.user}/teact-docs/blob/${gitConfig.branch}/content/docs/${page.path}`}
+          />
+        </div>
+      </header>
       <DocsBody>
         <MDX
           components={getMDXComponents({

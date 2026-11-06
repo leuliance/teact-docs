@@ -1,0 +1,226 @@
+---
+title: Upgrading from the alpha
+description: Move a bot built on the 0.2.0 alpha releases to Teact 1.0 — package versions, each breaking change as a before/after pair, and recommended updates.
+---
+
+Teact 1.0 is the first stable release. Most bots built on the 0.2.0 alphas upgrade by bumping the packages; the breaking changes below only affect you if you rely on the behaviour they describe. Each one shows the alpha code and what to write now.
+
+## Update the packages
+
+All `@teactjs/*` packages are released together with the same version. Install them without the `@alpha` tag so they resolve to 1.0:
+
+```npm
+npm i @teactjs/core @teactjs/ui @teactjs/telegram
+```
+
+Plus any others you use, for example:
+
+```npm
+npm i @teactjs/storage @teactjs/redis @teactjs/plugins
+```
+
+```npm
+npm i -D @teactjs/cli @teactjs/testing
+```
+
+Keep every `@teactjs/*` package on the same version. `teact doctor` warns when they differ and prints a command that aligns them.
+
+## Breaking changes
+
+### The default error screen no longer shows the error message
+
+When a render throws, the built-in error screen now shows a generic message instead of the error text, which could contain internals such as SQL, paths or tokens. The error is still logged, and the next update rebuilds the chat's screen.
+
+<TelegramPreview
+  bot="My Bot"
+  text="❌ Something went wrong. Please try again, or use /start to restart."
+  caption="The built-in error screen in 1.0"
+/>
+
+If you relied on users seeing the message, render your own screen with an `ErrorBoundary` `fallback`. It can be a node or a function of `(error, retry)`:
+
+```tsx tab="Before (alpha)"
+// The built-in screen showed error.message to the user.
+<App />
+```
+
+```tsx tab="After (1.0)"
+import { ErrorBoundary } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+<ErrorBoundary
+  fallback={(error, retry) => (
+    <Message text="Something broke. Try again or use /start.">
+      <InlineKeyboard>
+        <Button text="Retry" onClick={retry} />
+      </InlineKeyboard>
+    </Message>
+  )}
+>
+  <App />
+</ErrorBoundary>;
+```
+
+Avoid putting `error.message` back into the fallback text for the same reason the default changed.
+
+### Clients you pass in are no longer closed
+
+`redisPlugin`, `mongoPlugin` and `RedisDriver` no longer close a client you pass in when the bot stops, because the client is yours and may be shared. If you relied on the old behaviour, opt in:
+
+```ts tab="Before (alpha)"
+redisPlugin({ client: redis });
+mongoPlugin({ client, dbName: "mybot" });
+new RedisDriver({ client: redis });
+// all three closed the client on bot.stop()
+```
+
+```ts tab="After (1.0)"
+redisPlugin({ client: redis, closeOnStop: true });
+mongoPlugin({ client, dbName: "mybot", closeOnStop: true });
+new RedisDriver({ client: redis, closeClient: true });
+```
+
+### A `ttl` of `0`, a negative number or `Infinity` means "no expiry"
+
+Every storage driver now treats these values as "never expires". Previously some drivers expired the entry immediately or threw. If you used `ttl: 0` to write a value that disappears at once, delete it instead:
+
+```ts tab="Before (alpha)"
+// Some drivers dropped the value immediately, others threw.
+await driver.set("otp:42", code, { ttl: 0 });
+```
+
+```ts tab="After (1.0)"
+// ttl: 0 now keeps the value forever. To remove it, delete it:
+await driver.delete("otp:42");
+
+// For a short-lived value, give a real TTL in milliseconds:
+await driver.set("otp:42", code, { ttl: 5 * 60_000 });
+```
+
+### `escapeLike` is no longer exported
+
+`@teactjs/postgres`, `@teactjs/sqlite` and `@teactjs/cloudflare` no longer export `escapeLike`. If you built your own `LIKE` queries with it, copy a small helper into your project:
+
+```ts tab="Before (alpha)"
+import { escapeLike } from "@teactjs/postgres";
+```
+
+```ts tab="After (1.0)"
+// src/lib/escape-like.ts
+/** Escape `%`, `_` and `\` so `s` is matched literally by `LIKE … ESCAPE '\'`. */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, "\\$&");
+}
+
+// Prefix match: append the wildcard yourself.
+// WHERE key LIKE $1 ESCAPE '\'   with   [escapeLike(prefix) + "%"]
+```
+
+### Plugins listed in both `teact.config.ts` and `createBot()`
+
+A plugin (same `name`) listed in both `teact.config.ts` and `createBot({ plugins })` now runs once, using the `createBot()` copy, and Teact logs a warning. Before, both copies ran: two driver instances, doubled providers and duplicated `onStart`/`onStop`.
+
+```ts tab="Before (alpha)"
+// teact.config.ts
+export default defineConfig({ plugins: [storagePlugin({ driver: "file" })] });
+
+// src/index.tsx: both copies ran
+createBot({ /* ... */ plugins: [storagePlugin({ driver: "memory" })] });
+```
+
+```ts tab="After (1.0)"
+// Pick one place. On the edge it must be createBot(), because the
+// config file isn't loaded there.
+createBot({ /* ... */ plugins: [storagePlugin({ driver: "file", path: ".teact/storage.json" })] });
+```
+
+Repeating a plugin **within one list** keeps every copy, so layered limits still work:
+
+```ts
+plugins: [
+  rateLimit({ key: "user", window: 1000, limit: 3 }),
+  rateLimit({ key: "chat", window: 60_000, limit: 60 }),
+],
+```
+
+### Analytics counters start fresh
+
+`analytics().getStats()` now reads per-name counters. Counts recorded by the alphas aren't migrated, so totals start from zero after the upgrade. There is no code change; export any alpha totals you need before upgrading.
+
+## Recommended updates
+
+These aren't required, but most serverless bots benefit from them.
+
+### Pass `env` to `bot.fetch()` and read bindings with `getEnv`
+
+```ts tab="Before (alpha)"
+import { env } from "cloudflare:workers";
+
+const driver = new D1Driver(() => env.DB);
+```
+
+```ts tab="After (1.0)"
+import { getEnv } from "@teactjs/core";
+
+const driver = new D1Driver(() => getEnv<Env>().DB);
+
+export default {
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, env }),
+};
+```
+
+Importing `cloudflare:workers` breaks `bun dev`; `getEnv()` doesn't. See [Deployment](/docs/guides/deployment).
+
+### Register the command menu once after deploying
+
+`bot.fetch()` never calls `setMyCommands`, to avoid a call on every cold start. Run `bot.setCommands()` once from a script after you deploy; it resolves to the number of commands registered.
+
+### Use route buttons and session state on serverless
+
+A button press that lands on a fresh instance can't find its `onClick` handler, because handlers live in memory. Teact now re-renders the screen in place and logs a warning instead of doing nothing. To keep buttons working across instances, navigate with route buttons and keep screen state in `useSession` or `useStorage`:
+
+```tsx tab="Before"
+const [page, setPage] = useState(1);
+<Button text="Next" onClick={() => setPage(page + 1)} />
+```
+
+```tsx tab="After"
+const [session, setSession] = useSession<{ page?: number }>();
+const page = session.page ?? 1;
+<Button text="Next" onClick={() => setSession({ page: page + 1 })} />
+```
+
+### Use `strategy: "fixed"` with a shared driver for `rateLimit`
+
+When you run several instances, a fixed-window limit backed by a shared driver's atomic counter holds across all of them. See [`@teactjs/plugins`](/docs/packages/plugins).
+
+### Drop the dummy token in tests
+
+```ts tab="Before (alpha)"
+createBot({ component: App, adapter: new MockAdapter(), token: "test" });
+```
+
+```ts tab="After (1.0)"
+createBot({ component: App, adapter: new MockAdapter() });
+```
+
+### Pass `botInfo` to `TelegramAdapter` on serverless
+
+With `botInfo`, grammY skips the `getMe` call that every cold isolate would otherwise make:
+
+```ts
+new TelegramAdapter({
+  botInfo: { id: 123456789, is_bot: true, first_name: "My Bot", username: "my_bot", /* … */ },
+});
+```
+
+See [`@teactjs/telegram`](/docs/packages/telegram).
+
+## Related
+
+<Cards>
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="Precedence between teact.config.ts and createBot, including plugin de-duplication." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="getEnv, setCommands and the edge checklist." />
+  <Card title="Troubleshooting" href="/docs/getting-started/troubleshooting" description="Common failure modes and how to fix them." />
+</Cards>

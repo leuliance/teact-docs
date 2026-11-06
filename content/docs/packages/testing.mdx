@@ -1,61 +1,242 @@
 ---
 title: "@teactjs/testing"
-description: MockAdapter to simulate updates and assert sends, and renderBot to inspect component output — no Telegram network calls.
+description: API reference for MockAdapter (simulate updates, assert sends, edits, cleared buttons and commands) and renderBot (render a component to its output tree) — no Telegram network calls.
 ---
 
+`@teactjs/testing` lets you test Teact bots without hitting Telegram. `MockAdapter` is an in-memory
+`Adapter`: pass it to `createBot`, simulate incoming messages and button presses, and assert on what
+the bot sent, edited and cleared. `renderBot` renders a single component with a fake runtime context
+and returns its serialized output tree. Works with `bun test`, Vitest or Jest.
 
-Test Teact bots without hitting Telegram. `MockAdapter` records sent messages and lets you simulate
-incoming updates; `renderBot` renders a component in isolation and returns its serialized output
-tree. Works with Vitest, Jest, or `bun test`.
+```npm
+npm i -D @teactjs/testing
+```
 
-```bash
-bun add -D @teactjs/testing
+Peers: `@teactjs/core`, `react`.
+
+**When to use**
+
+- Integration tests of a whole bot: commands, routing, buttons, middleware, plugins, sessions.
+- Unit tests of one screen's output.
+- Testing serverless entry points (`bot.fetch()`) without a network.
+
+## Quick example
+
+```tsx title="test/counter.test.tsx"
+import { describe, test, expect } from "bun:test";
+import { createBot, useState, type OutputNode } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { MockAdapter } from "@teactjs/testing";
+
+const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+function findButton(node: OutputNode): OutputNode | null {
+  if (node.type === "tg-button") return node;
+  for (const c of node.children) {
+    const hit = findButton(c);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function Counter() {
+  const [n, setN] = useState(0);
+  return (
+    <Message text={`count: ${n}`}>
+      <InlineKeyboard>
+        <Button text="+1" onClick={() => setN((c) => c + 1)} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+describe("Counter", () => {
+  test("a press increments the count", async () => {
+    const adapter = new MockAdapter();
+    const bot = createBot({ component: Counter, adapter }); // no token needed
+    await bot.start();
+
+    await adapter.simulateMessage("1", "1", "/start");
+    await wait();
+    const first = adapter.getLastSent()!;
+    expect(first.output.props.text).toBe("count: 0");
+
+    const cb = findButton(first.output)!.props.callbackData as string;
+    await adapter.simulateCallback("1", "1", cb, "1");
+    await wait();
+    expect(adapter.getLastEdited()?.output.props.text).toBe("count: 1");
+
+    await bot.stop();
+  });
+});
 ```
 
 ## Exports
 
-| Export | Kind | Description |
-| ------ | ---- | ----------- |
-| `MockAdapter` | class | In-memory adapter that records sends and simulates updates. |
-| `renderBot` | function | Render a component to an output tree with assertion helpers. |
-| `SentMessage`, `EditedMessage` | types | Recorded message shapes. |
-| `RenderResult` | type | Return type of `renderBot`. |
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `MockAdapter` | class | `new MockAdapter()` | In-memory adapter that records output and simulates updates. |
+| `renderBot` | function | `(Component: FunctionComponent<{ ctx: BotContext }>, initialCtx?: Partial<BotContext>) => RenderResult` | Render one component to an output tree. |
+| `SentMessage` | type | `{ chatId; output: OutputNode; timestamp: number }` | A recorded send. |
+| `EditedMessage` | type | `{ chatId; messageId: number; output: OutputNode; timestamp: number }` | A recorded edit. |
+| `SimulateOptions` | type | `{ languageCode?: string }` | Extra fields for `simulateMessage` / `simulateCallback`. |
+| `RenderResult` | type | object | Return value of `renderBot`. |
 
 ## MockAdapter
 
-Pass it to `createBot` as the adapter, then drive updates and assert on `sent` / `edited`:
+`name` is `'mock'` and `requiresToken` is `false`, so `createBot()` works without `token` or
+`TELEGRAM_BOT_TOKEN`. Updates use platform `'mock'` and a user `{ id, firstName: 'Test' }`.
+
+### Recorded state
+
+| Property | Type | Description |
+| -------- | ---- | ----------- |
+| `sent` | `SentMessage[]` | Every `send()`. Message ids start at 1 and increase. |
+| `edited` | `EditedMessage[]` | Every `edit()`. |
+| `cleared` | `{ chatId; messageId }[]` | Every `clearButtons()` (navigate modes `stack` and `dismiss`). |
+| `commands` | `{ command; description }[]` | The last `setCommands()` — the command menu. |
+| `connected` | `boolean` | Between `connect()` and `disconnect()`. |
+
+### Methods
+
+| Method | Description |
+| ------ | ----------- |
+| `simulateMessage(chatId, userId, text, opts?)` | Emit a text message. Each gets a unique `messageId` (from 100). Resolves after the bot has handled it. |
+| `simulateCallback(chatId, userId, data, messageId?, opts?)` | Emit a button press with callback `data`, on `messageId` (or a fresh one). |
+| `getLastSent()` | The most recent `SentMessage`, or `undefined`. |
+| `getLastEdited()` | The most recent `EditedMessage`, or `undefined`. |
+| `reset()` | Clear `sent`, `edited` and edit tracking; restart ids. |
+| `webhookCallback()` | `(Request) => Promise<Response>` for `bot.fetch()`: a JSON body `{ text }` or `{ callbackData }` is dispatched for chat `"1"`, user `"1"`. |
+| `on`, `off`, `send`, `edit`, `canEdit`, `clearButtons`, `setCommands`, `listen`, `connect`, `disconnect` | The `Adapter` contract (`listen` is a no-op). |
+
+`opts.languageCode` is set on `ctx.user.languageCode`, so [i18n](/docs/guides/i18n) locale detection
+picks it up:
 
 ```ts
-import { MockAdapter } from "@teactjs/testing";
+await adapter.simulateMessage("1", "1", "/start", { languageCode: "pt-br" });
+await adapter.simulateCallback("1", "1", "ok", undefined, { languageCode: "pt-br" });
+```
+
+`canEdit` mirrors the real adapter: only a `tg-message` without a reply keyboard or removal, and only
+when the chat's last output was also a `tg-message`. So a text → photo transition shows up in `sent`,
+not `edited`.
+
+<Callout type="info" title="Waiting for output">
+The reconciler commits asynchronously. `simulateMessage` / `simulateCallback` resolve once the bot
+has handled the update, but give React a tick (`await new Promise(r => setTimeout(r, 30))`, as the
+Teact test suite does) before asserting when a screen updates from an effect or a second render.
+</Callout>
+
+### Testing bot.fetch()
+
+```tsx title="test/worker.test.tsx"
+import { test, expect } from "bun:test";
 import { createBot } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { MockAdapter } from "@teactjs/testing";
 
-const adapter = new MockAdapter();
-const bot = createBot({ component: App, adapter, token: "test" });
-await bot.start();
+const App = () => <Message text="Hi from the edge" />;
 
-await adapter.simulateMessage("1", "1", "/start");   // (chatId, userId, text)
-await adapter.simulateCallback("1", "1", "ok");       // (chatId, userId, data, messageId?)
+test("rejects a wrong webhook secret, handles a good one", async () => {
+  const adapter = new MockAdapter();
+  const bot = createBot({ component: App, adapter });
 
-adapter.getLastSent(); // most recent SentMessage | undefined
-adapter.sent;          // SentMessage[]
-adapter.edited;        // EditedMessage[]
-adapter.reset();
+  const bad = await bot.fetch(new Request("https://x/", { method: "POST", body: "{}" }), { secretToken: "s3cret" });
+  expect(bad.status).toBe(401);
+
+  const ok = await bot.fetch(
+    new Request("https://x/", {
+      method: "POST",
+      headers: { "x-telegram-bot-api-secret-token": "s3cret" },
+      body: JSON.stringify({ text: "/start" }),
+    }),
+    { secretToken: "s3cret" },
+  );
+  expect(ok.status).toBe(200);
+  expect(adapter.sent.length).toBeGreaterThan(0); // the send finished before fetch() resolved
+});
 ```
 
 ## renderBot
 
-`renderBot(Component, initialCtx?)` renders a `{ ctx }` component and returns the serialized tree
-plus helpers. `rerender` accepts a `Partial<BotContext>`:
+Renders `Component` (it receives `{ ctx }`) inside a `RuntimeContext` with a default context —
+`chatId: 'test-chat'`, `userId: 'test-user'`, `user: { id: 'test-user', firstName: 'Test' }`,
+`platform: 'mock'` — merged with `initialCtx`. `useSession` works against an in-memory object.
 
-```tsx
+| `RenderResult` member | Description |
+| --------------------- | ----------- |
+| `output` | The latest committed `OutputNode`, or `null` before the first commit. |
+| `rerender(ctxOverrides?)` | Render again with `{ ...initialCtx, ...ctxOverrides }`. |
+| `unmount()` | Unmount the tree. |
+| `findByType(type, node?)` | Every node of a host type (`'tg-button'`, `'tg-photo'`, …), depth-first. |
+| `findText(node?)` | Concatenated `text` and text-node values. |
+
+```tsx title="test/greeting.test.tsx"
+import { test, expect } from "bun:test";
+import { useBot } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 import { renderBot } from "@teactjs/testing";
 
-const result = renderBot(MyComponent);
-result.output;                  // serialized OutputNode | null
-result.findByType("tg-button"); // OutputNode[]
-result.findText();              // concatenated text
-result.rerender({ text: "/help" });
-result.unmount();
+function Greeting() {
+  const { user, text } = useBot();
+  return (
+    <Message text={text === "/help" ? "Use the buttons." : `Hello ${user.firstName}`}>
+      <InlineKeyboard>
+        <Button text="Shop" route="/shop" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+test("greets and links to the shop", async () => {
+  const result = renderBot(Greeting);
+  await new Promise((r) => setTimeout(r, 10));
+
+  expect(result.output!.props.text).toBe("Hello Test");
+  const [btn] = result.findByType("tg-button");
+  expect(btn.props.callbackData).toBe("__route:/shop");
+
+  result.rerender({ text: "/help" });
+  await new Promise((r) => setTimeout(r, 10));
+  expect(result.findText()).toContain("Use the buttons.");
+  result.unmount();
+});
 ```
 
-See the [Testing guide](/docs/guides/testing) for full examples.
+<Callout type="warn" title="renderBot has no router or plugins">
+`renderBot` provides only the runtime context. Hooks that need the router (`useNavigate`,
+`useParams`), plugins (`useStorage`, `useService`, `useAuth`) or a button registry for `onClick` will
+throw or do nothing — test those through `createBot` with `MockAdapter`.
+</Callout>
+
+## Recipes
+
+### Assert the command menu
+
+```ts
+await bot.start();
+expect(adapter.commands).toContainEqual({ command: "start", description: "Open the menu" });
+```
+
+### Test a halting plugin
+
+```ts
+import { maintenance } from "@teactjs/plugins";
+
+const adapter = new MockAdapter();
+const bot = createBot({ component: App, adapter, plugins: [maintenance({ allow: ["42"] })] });
+await bot.start();
+
+await adapter.simulateMessage("1", "1", "/start");
+expect(adapter.getLastSent()?.output.props.text).toContain("under maintenance");
+
+await adapter.simulateMessage("42", "42", "/start"); // allow-listed user gets the real screen
+```
+
+## Related
+
+<Cards>
+  <Card title="Testing guide" href="/docs/guides/testing" description="Full test setups and patterns." />
+  <Card title="@teactjs/core" href="/docs/packages/core#the-adapter-contract" description="The Adapter contract MockAdapter implements." />
+  <Card title="@teactjs/plugins" href="/docs/packages/plugins" description="Plugins worth covering with tests." />
+</Cards>

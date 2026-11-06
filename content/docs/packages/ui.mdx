@@ -1,63 +1,521 @@
 ---
 title: "@teactjs/ui"
-description: The component layer — Message, keyboards, media, polls, formatting, layout, and the re-exported data hooks.
+description: API reference for every Teact component — Message, inline and reply keyboards, media, polls, locations, formatting, layout — plus the re-exported ErrorBoundary and data hooks.
 ---
 
+`@teactjs/ui` is where every Teact component lives. Each component renders a host element
+(`tg-message`, `tg-button`, …) that the [`@teactjs/core`](/docs/packages/core) reconciler collects
+and the adapter turns into a Telegram API call. Import your UI from here; the engine and hooks come
+from `@teactjs/core`, which is a peer dependency.
 
-`@teactjs/ui` is where every Teact component lives. Import your UI from here; the engine and hooks
-come from [`@teactjs/core`](/docs/packages/core). Components render through the core reconciler, so
-the two packages are always used together.
-
-```bash
-bun add @teactjs/ui
+```npm
+npm i @teactjs/ui @teactjs/core react
 ```
 
-```tsx
-import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
-```
+**When to use**
 
-## Components
+- Always, for anything a screen renders: text, buttons, keyboards, media, polls, locations.
+- When you want components and the data hooks (`useQuery`, `useMutation`) or `ErrorBoundary` from
+  one import.
 
-- **Messaging:** `Message`, `Notification`, `Alert`
-- **Inline keyboards:** `InlineKeyboard`, `ButtonRow`, `Button`, `WebAppButton`
-- **Reply keyboards:** `ReplyKeyboard`, `ReplyRow`, `ReplyButton`, `RequestContactButton`, `RequestLocationButton`, `ReplyKeyboardRemove`
-- **Media:** `Photo`, `Document`, `Video`, `Animation`, `Voice`, `Audio`, `VideoNote`, `Sticker`, `MediaGroup`, `MediaPhoto`, `MediaVideo`
-- **Rich data:** `Poll`, `Contact`, `Location`, `LiveLocation`, `Venue`
-- **Formatting:** `Bold`, `Italic`, `Code`
-- **Layout:** `List`, `ListItem`, `Divider`
-- **Resilience:** `ErrorBoundary`, `SuspenseFallback`
+## Quick example
 
-## Data hooks
-
-`useQuery` and `useMutation` are re-exported from `@teactjs/core` for convenience, so you can pull
-components and data hooks from one import:
-
-```tsx
-import { Message, useQuery } from "@teactjs/ui";
-```
-
-## Example
-
-```tsx
-import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+```tsx title="src/screens/Counter.tsx"
 import { useState } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 
-function Counter() {
+export function Counter() {
   const [count, setCount] = useState(0);
   return (
     <Message text={`Count: ${count}`}>
       <InlineKeyboard>
-        <Button text="-1" onClick={() => setCount((c) => c - 1)} />
-        <Button text="+1" onClick={() => setCount((c) => c + 1)} />
+        <ButtonRow>
+          <Button text="-1" onClick={() => setCount((c) => c - 1)} />
+          <Button text="+1" onClick={() => setCount((c) => c + 1)} />
+        </ButtonRow>
+        <Button text="Reset" variant="destructive" onClick={() => setCount(0)} />
       </InlineKeyboard>
     </Message>
   );
 }
 ```
 
-<Callout type="info">
-A bare `<Button>` becomes its own row. Use `<InlineKeyboard columns={2}>` to auto-grid buttons into
-N-column rows, or wrap buttons in `<ButtonRow>` for one explicit row.
+<TelegramPreview
+  bot="Counter Bot"
+  user="/start"
+  text={"Count: 0"}
+  buttons={[["-1", "+1"], ["✕ Reset"]]}
+/>
+
+## Exports
+
+### Messaging
+
+| Component | Host element | Description |
+| --------- | ------------ | ----------- |
+| `Message` | `tg-message` | A text message. Children add formatted text and keyboards. |
+| `Notification` | `tg-notification` | Toast or alert answering a button press. |
+| `Alert` | `tg-alert` | Icon-prefixed block of text inside a message. |
+| `SuspenseFallback` | `tg-message` | A loading message for `Suspense` fallbacks. |
+
+Compound members: `Message.Bold`, `Message.Italic`, `Message.Code`.
+
+### Inline keyboards
+
+| Component | Description |
+| --------- | ----------- |
+| `InlineKeyboard` | Container for inline buttons; must be inside a message or media. |
+| `ButtonRow` | One explicit row of buttons (also `InlineKeyboard.Row`, `Button.Row`). |
+| `Button` | Callback, route, URL or conversation button (also `InlineKeyboard.Button`). |
+| `WebAppButton` | Opens a Telegram Web App (also `Button.WebApp`). |
+
+### Reply keyboards
+
+| Component | Description |
+| --------- | ----------- |
+| `ReplyKeyboard` | Keyboard below the input field. |
+| `ReplyRow` | A row (also `ReplyKeyboard.Row`). |
+| `ReplyButton` | Sends its text as a message (also `ReplyKeyboard.Button`). |
+| `RequestContactButton` | Asks for the phone contact (also `ReplyKeyboard.RequestContact`). |
+| `RequestLocationButton` | Asks for the location (also `ReplyKeyboard.RequestLocation`). |
+| `ReplyKeyboardRemove` | Removes the current reply keyboard. |
+
+### Media
+
+| Component | Telegram method |
+| --------- | --------------- |
+| `Photo` | `sendPhoto` |
+| `Video` | `sendVideo` |
+| `Animation` | `sendAnimation` (GIF) |
+| `Voice` | `sendVoice` (OGG/OPUS) |
+| `Audio` | `sendAudio` |
+| `VideoNote` | `sendVideoNote` (round video) |
+| `Sticker` | `sendSticker` |
+| `Document` | `sendDocument` |
+| `MediaGroup`, `MediaPhoto`, `MediaVideo` | `sendMediaGroup` (also `MediaGroup.Photo`, `MediaGroup.Video`) |
+
+### Rich data
+
+| Component | Telegram method |
+| --------- | --------------- |
+| `Poll` (and `Poll.Quiz`) | `sendPoll` |
+| `Contact` | `sendContact` |
+| `Location` | `sendLocation` |
+| `LiveLocation` | `sendLocation` with `live_period` (also `Location.Live`) |
+| `Venue` | `sendVenue` (also `Location.Venue`) |
+
+### Formatting and layout
+
+`Bold`, `Italic`, `Code`, `List`, `ListItem` (also `List.Item`), `Divider`.
+
+### Re-exported from @teactjs/core
+
+`ErrorBoundary`, `useQuery`, `useMutation` and the types `ErrorBoundaryProps`, `UseQueryOptions`,
+`UseQueryResult`, `UseMutationOptions`, `UseMutationResult`. See the
+[core reference](/docs/packages/core#data-hooks).
+
+### Types
+
+Every component's props type is exported: `MessageProps`, `ButtonProps`, `ButtonVariant`,
+`ButtonRowProps`, `InlineKeyboardProps`, `PhotoProps`, `DocumentProps`, `BoldProps`, `ItalicProps`,
+`CodeProps`, `AlertProps`, `AlertVariant`, `ListProps`, `ListItemProps`, `DividerProps`,
+`SuspenseFallbackProps`, `VideoProps`, `AnimationProps`, `VoiceProps`, `AudioProps`,
+`VideoNoteProps`, `StickerProps`, `ContactProps`, `LocationProps`, `LiveLocationProps`,
+`VenueProps`, `MediaGroupProps`, `MediaPhotoProps`, `MediaVideoProps`, `ReplyKeyboardProps`,
+`ReplyRowProps`, `ReplyButtonProps`, `RequestContactButtonProps`, `RequestLocationButtonProps`,
+`NotificationProps`, `WebAppButtonProps`, `PollProps`.
+
+## Message
+
+<TypeTable
+  type={{
+    text: { type: 'string', description: 'Message text. String children are appended after it.' },
+    parseMode: { type: "'Markdown' | 'MarkdownV2' | 'HTML'", description: 'Telegram parse mode. When set, text is sent verbatim (you escape it).' },
+    disablePreview: { type: 'boolean', description: 'Disable the link preview (link_preview_options.is_disabled).' },
+    children: { type: 'ReactNode', description: 'Text, formatting components, Alert/List/Divider, and keyboards.' },
+  }}
+/>
+
+```tsx title="src/screens/Order.tsx"
+import { Message, Bold, Code, Divider, List, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Order({ id, items }: { id: string; items: string[] }) {
+  return (
+    <Message>
+      <Bold>Order #{id}</Bold>
+      {"\n"}
+      <Divider length={12} />
+      <List ordered>
+        {items.map((item) => (
+          <List.Item key={item}>{item}</List.Item>
+        ))}
+      </List>
+      Tracking code: <Code>{id.toUpperCase()}</Code>
+      <InlineKeyboard>
+        <Button text="Track" route="/orders/:id/track" params={{ id }} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview
+  bot="Shop Bot"
+  text={"Order #a17\n────────────\n1. Coffee beans\n2. Grinder\nTracking code: A17"}
+  buttons={[["Track"]]}
+/>
+
+<Callout type="info" title="Text escaping">
+`Bold`, `Italic` and `Code` switch the message to HTML parse mode. In that mode, literal text (the
+`text` prop without an explicit `parseMode`, string children, captions) is HTML-escaped, so `<`, `>`
+and `&` in user content cannot break the markup. If you set `parseMode` yourself, your `text` is sent
+verbatim.
 </Callout>
 
-See the [Components guide](/docs/guides/components) for per-component props and layout rules.
+### Formatting
+
+| Component | Props | Output |
+| --------- | ----- | ------ |
+| `Bold` | `children` | `<b>…</b>` |
+| `Italic` | `children` | `<i>…</i>` |
+| `Code` | `language?: string`, `children` | `<code>…</code>`, or `<pre><code class="language-x">…</code></pre>` with `language` |
+
+### Alert
+
+<TypeTable
+  type={{
+    variant: { type: "'info' | 'warning' | 'error' | 'success'", description: 'Icon: ℹ️, ⚠️, ❌ or ✅.', default: "'info'" },
+    title: { type: 'string', description: 'Heading shown after the icon.' },
+    children: { type: 'ReactNode', description: 'Body text, on the next line.' },
+  }}
+/>
+
+```tsx
+<Message>
+  <Alert variant="success" title="Saved">Your preferences have been updated.</Alert>
+</Message>
+```
+
+### List and Divider
+
+`List` takes `ordered?: boolean` (default `false`) and `List.Item` children; each item is prefixed
+with `• ` or `1. ` and ends with a newline. `Divider` takes `char?: string` (default `'─'`) and
+`length?: number` (default `20`) and ends with a newline.
+
+### SuspenseFallback
+
+`SuspenseFallback` takes `text?: string` (default `'⏳ Loading...'`) and renders a plain message:
+
+```tsx
+<Suspense fallback={<SuspenseFallback text="Fetching your orders…" />}>
+  <Orders />
+</Suspense>
+```
+
+## Inline keyboards
+
+### InlineKeyboard
+
+<TypeTable
+  type={{
+    columns: { type: 'number', description: 'Arrange direct children into rows of this many buttons, so you can skip ButtonRow.' },
+    children: { type: 'ReactNode', description: 'Buttons and ButtonRows. A bare Button becomes its own row.' },
+  }}
+/>
+
+```tsx
+<InlineKeyboard columns={2}>
+  <Button text="Kanto" route="/region/kanto" />
+  <Button text="Johto" route="/region/johto" />
+  <Button text="Hoenn" route="/region/hoenn" />
+</InlineKeyboard>
+```
+
+<TelegramPreview text={"Pick a region"} buttons={[["Kanto", "Johto"], ["Hoenn"]]} />
+
+### Button
+
+<TypeTable
+  type={{
+    text: { type: 'string', description: 'Label.', required: true },
+    variant: { type: "'default' | 'primary' | 'destructive' | 'outline'", description: 'Label prefix: none, "▸ ", "✕ " or "◦ ".', default: "'default'" },
+    onClick: { type: 'string | (() => void)', description: 'A handler (kept in memory for this chat) or raw callback_data.' },
+    route: { type: 'string', description: 'Navigate to this route when tapped. Works on any instance.' },
+    params: { type: 'Record<string, string | number>', description: 'Fills :param segments in route.' },
+    url: { type: 'string', description: 'Open a URL. No callback is sent.' },
+    conversation: { type: 'string', description: 'Start a named conversation (needs conversationsPlugin from @teactjs/telegram).' },
+  }}
+/>
+
+When several are set, the first match wins: `url` → `route` → `conversation` → `onClick` function
+→ `onClick` string → the button's `text` as callback data.
+
+`ButtonRow` must be inside `InlineKeyboard`, and `Button` must be inside `InlineKeyboard`; otherwise
+they throw with an example of the correct nesting.
+
+### WebAppButton
+
+`WebAppButton` (`Button.WebApp`) takes `text`, `url` and `variant?`, and renders a `web_app` button.
+
+```tsx
+<InlineKeyboard>
+  <Button.WebApp text="Open store" url="https://shop.example.com/app" />
+</InlineKeyboard>
+```
+
+## Reply keyboards
+
+<TypeTable
+  type={{
+    resizeKeyboard: { type: 'boolean', description: 'Fit the keyboard to its buttons.', default: 'true' },
+    oneTimeKeyboard: { type: 'boolean', description: 'Hide after one press.' },
+    placeholder: { type: 'string', description: 'Input field placeholder.' },
+    isPersistent: { type: 'boolean', description: 'Keep the keyboard visible.' },
+    children: { type: 'ReactNode', description: 'ReplyKeyboard.Row / Button / RequestContact / RequestLocation.' },
+  }}
+/>
+
+`ReplyButton`, `RequestContactButton` and `RequestLocationButton` each take `text: string` and must be
+inside `ReplyKeyboard`. A bare reply button outside a row becomes its own row.
+
+```tsx title="src/screens/Share.tsx"
+import { useEventData } from "@teactjs/core";
+import { Message, ReplyKeyboard, ReplyKeyboardRemove } from "@teactjs/ui";
+
+export function Share() {
+  const contact = useEventData<{ phone_number: string }>("contact");
+  if (contact)
+    return (
+      <Message text={`Thanks, we'll call ${contact.phone_number}.`}>
+        <ReplyKeyboardRemove />
+      </Message>
+    );
+  return (
+    <Message text="How can we reach you?">
+      <ReplyKeyboard oneTimeKeyboard placeholder="Tap a button">
+        <ReplyKeyboard.Row>
+          <ReplyKeyboard.RequestContact text="Share phone" />
+          <ReplyKeyboard.RequestLocation text="Share location" />
+        </ReplyKeyboard.Row>
+        <ReplyKeyboard.Button text="Skip" />
+      </ReplyKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text={"How can we reach you?"} replyKeyboard={[["Share phone", "Share location"], ["Skip"]]} />
+
+<Callout type="warn" title="One keyboard per message">
+A Telegram message carries one `reply_markup`. If a tree has `ReplyKeyboardRemove`, a
+`ReplyKeyboard` and an `InlineKeyboard`, the remove wins, then the reply keyboard; the inline
+keyboard is dropped. Messages with a reply keyboard are always sent as new messages, never edited.
+</Callout>
+
+## Notification
+
+<TypeTable
+  type={{
+    text: { type: 'string', description: 'Toast text.', required: true },
+    showAlert: { type: 'boolean', description: 'Show a modal alert instead of a toast.' },
+  }}
+/>
+
+On Telegram, a `Notification` rendered in response to a button press becomes the
+`answerCallbackQuery` text for that press. Without one, the press is answered empty so the button's
+spinner stops.
+
+```tsx
+function Like() {
+  const [liked, setLiked] = useState(false);
+  return (
+    <Message text={liked ? "You liked this" : "Like this post?"}>
+      {liked && <Notification text="Thanks!" />}
+      <InlineKeyboard>
+        <Button text={liked ? "Liked" : "Like"} onClick={() => setLiked(true)} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text={"You liked this"} buttons={[["Liked"]]} edited notification="Thanks!" />
+
+## Media
+
+All media components take `src: string` — a URL or a Telegram `file_id`. Children (an
+`InlineKeyboard`, extra text) attach to the media message; the text becomes part of the caption.
+
+<TypeTable
+  type={{
+    'Photo': { type: '{ src; caption?; parseMode?; hasSpoiler?; children? }', description: 'Photo with optional spoiler blur.' },
+    'Video': { type: '{ src; caption?; parseMode?; width?; height?; duration?; supportsStreaming?; hasSpoiler?; children? }', description: 'Video.' },
+    'Animation': { type: '{ src; caption?; parseMode?; width?; height?; duration?; hasSpoiler?; children? }', description: 'GIF / animation.' },
+    'Voice': { type: '{ src; caption?; parseMode?; duration?; children? }', description: 'Voice message (.ogg, OPUS).' },
+    'Audio': { type: '{ src; caption?; parseMode?; performer?; title?; duration?; children? }', description: 'Audio file with player UI.' },
+    'VideoNote': { type: '{ src; duration?; length? }', description: 'Round video note.' },
+    'Sticker': { type: '{ src; emoji? }', description: 'Sticker by file_id or URL.' },
+    'Document': { type: '{ src; caption?; filename?; children? }', description: 'Any file.' },
+  }}
+/>
+
+```tsx title="src/screens/Product.tsx"
+import { Photo, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Product() {
+  return (
+    <Photo src="https://example.com/mug.jpg" caption="Teact mug — $12">
+      <InlineKeyboard>
+        <Button text="Add to cart" route="/cart/add/:sku" params={{ sku: "mug" }} />
+      </InlineKeyboard>
+    </Photo>
+  );
+}
+```
+
+### MediaGroup
+
+`MediaGroup` takes `MediaGroup.Photo` (`src`, `caption?`, `parseMode?`, `hasSpoiler?`) and
+`MediaGroup.Video` (`src`, `caption?`, `parseMode?`, `width?`, `height?`, `duration?`,
+`supportsStreaming?`, `hasSpoiler?`) children. Both throw outside a `MediaGroup`.
+
+```tsx
+<MediaGroup>
+  <MediaGroup.Photo src="https://example.com/a.jpg" caption="Front" />
+  <MediaGroup.Photo src="https://example.com/b.jpg" />
+  <MediaGroup.Video src="https://example.com/c.mp4" supportsStreaming />
+</MediaGroup>
+```
+
+Telegram albums need 2–10 items: a group with one item is sent as a plain photo or video, more than 10
+are cut to 10 with a warning, and an empty group sends nothing.
+
+## Polls
+
+<TypeTable
+  type={{
+    question: { type: 'string', description: 'Poll question.', required: true },
+    options: { type: 'string[]', description: 'Answer options (at least 2).', required: true },
+    isAnonymous: { type: 'boolean', description: 'Anonymous poll.' },
+    type: { type: "'regular' | 'quiz'", description: 'Poll type.' },
+    allowsMultipleAnswers: { type: 'boolean', description: 'Allow several answers.' },
+    correctOptionId: { type: 'number', description: 'Index of the correct option (quiz).' },
+    explanation: { type: 'string', description: 'Shown after a wrong quiz answer.' },
+    explanationParseMode: { type: "'Markdown' | 'MarkdownV2' | 'HTML'", description: 'Parse mode for explanation.' },
+    openPeriod: { type: 'number', description: 'Seconds the poll stays open.' },
+    isClosed: { type: 'boolean', description: 'Send the poll closed.' },
+  }}
+/>
+
+`Poll.Quiz` is `Poll` with `type: 'quiz'` and a required `correctOptionId`:
+
+```tsx
+<Poll.Quiz
+  question="Which type is Pikachu?"
+  options={["Water", "Electric", "Fire"]}
+  correctOptionId={1}
+  explanation="Pikachu is an Electric-type Pokémon."
+/>
+```
+
+A poll with fewer than 2 options, or a quiz whose `correctOptionId` is out of range, logs a warning
+(Telegram rejects both).
+
+## Contact, Location, Venue
+
+<TypeTable
+  type={{
+    'Contact': { type: '{ phoneNumber; firstName; lastName?; vcard? }', description: 'Contact card.' },
+    'Location': { type: '{ latitude; longitude; horizontalAccuracy? }', description: 'Static pin.' },
+    'Location.Live': { type: '{ latitude; longitude; livePeriod; horizontalAccuracy?; heading?; proximityAlertRadius? }', description: 'Live location for livePeriod seconds.' },
+    'Location.Venue': { type: '{ latitude; longitude; title; address; foursquareId?; foursquareType?; googlePlaceId?; googlePlaceType? }', description: 'Named place.' },
+  }}
+/>
+
+```tsx
+<Location.Venue latitude={9.0108} longitude={38.7613} title="Meskel Square" address="Addis Ababa" />
+```
+
+## Recipes
+
+### Confirm before delete
+
+```tsx title="src/screens/DeleteItem.tsx"
+import { useState, useNavigate } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+
+export function DeleteItem({ onDelete }: { onDelete: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const navigate = useNavigate();
+  if (!confirming)
+    return (
+      <Message text="Item: Blue mug">
+        <InlineKeyboard>
+          <Button text="Delete" variant="destructive" onClick={() => setConfirming(true)} />
+        </InlineKeyboard>
+      </Message>
+    );
+  return (
+    <Message text="Delete this item? This can't be undone.">
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button text="Yes, delete" variant="destructive" onClick={async () => { await onDelete(); navigate("/"); }} />
+          <Button text="Cancel" onClick={() => setConfirming(false)} />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text={"Delete this item? This can't be undone."} buttons={[["✕ Yes, delete", "Cancel"]]} edited />
+
+### Paginated list
+
+```tsx title="src/screens/Catalog.tsx"
+import { useState } from "@teactjs/core";
+import { Message, List, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+
+const PAGE = 5;
+
+export function Catalog({ items }: { items: string[] }) {
+  const [page, setPage] = useState(0);
+  const pages = Math.ceil(items.length / PAGE);
+  const slice = items.slice(page * PAGE, page * PAGE + PAGE);
+  return (
+    <Message text={`Page ${page + 1}/${pages}\n`}>
+      <List>{slice.map((i) => <List.Item key={i}>{i}</List.Item>)}</List>
+      <InlineKeyboard>
+        <ButtonRow>
+          {page > 0 && <Button text="‹ Prev" onClick={() => setPage(page - 1)} />}
+          {page < pages - 1 && <Button text="Next ›" onClick={() => setPage(page + 1)} />}
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+On serverless, keep `page` in `useSession` or encode it in the route (`/catalog/:page` with
+`route` buttons) so presses work on any instance.
+
+## Behaviour notes
+
+- **Limits.** Message text longer than 4096 characters and captions longer than 1024 are truncated
+  with `…` and a warning.
+- **Buttons without text.** A `Message` that has a keyboard but no text sends nothing and logs a
+  warning — Telegram requires text to attach a keyboard.
+- **Edits.** On a button press, the screen is edited in place when both the old and new output are
+  plain text messages. Switching between text and media sends a new message.
+- **`onClick` lifetime.** Function handlers live in process memory; `route` buttons are encoded in
+  the callback data and survive restarts. See
+  [Button presses on a new process](/docs/packages/core#button-presses-on-a-new-process).
+
+## Related
+
+<Cards>
+  <Card title="Components guide" href="/docs/guides/components" description="Layout rules and patterns for every component." />
+  <Card title="Forms" href="/docs/guides/forms" description="Collect input with useForm and buttons." />
+  <Card title="@teactjs/core" href="/docs/packages/core" description="Hooks, router and the bot engine." />
+  <Card title="@teactjs/telegram" href="/docs/packages/telegram" description="How components become Telegram API calls." />
+</Cards>

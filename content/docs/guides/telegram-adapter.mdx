@@ -1,46 +1,283 @@
 ---
 title: Telegram adapter
-description: TelegramAdapter on grammY — polling, webhooks, adapter methods, and optional plugins.
+description: TelegramAdapter on grammY — options, polling, webhook server and serverless transports, output guarantees, the adapter surface, raw grammY access and fail-fast startup.
 ---
+
+`TelegramAdapter` from `@teactjs/telegram` connects the platform-neutral engine in `@teactjs/core` to
+Telegram. It is built on [grammY](https://grammy.dev): it turns incoming Telegram updates into Teact
+`BotContext`s, and turns rendered output trees into Bot API calls. Every Telegram bot uses it; you
+rarely touch it beyond `new TelegramAdapter()`, except to tune startup or to reach grammY directly.
 
 ## Basic usage
 
-```ts
+```npm
+npm i @teactjs/core @teactjs/ui @teactjs/telegram react
+```
+
+```tsx title="src/index.tsx"
+import { createBot, createRouter } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
 import { TelegramAdapter } from "@teactjs/telegram";
 
-new TelegramAdapter();
+const router = createRouter({
+  "/": { component: () => <Message text="Hello from Teact!" />, command: { name: "start", description: "Start" } },
+});
+
+export const bot = createBot({ router, adapter: new TelegramAdapter() });
+
+if (import.meta.main) bot.start();
 ```
 
-Pass to `createBot` with `token` and `mode: "polling"` | `"webhook"`.
+<TelegramPreview bot="Hello Bot" user="/start" text={"Hello from Teact!"} />
 
-## Webhook
+The token comes from `createBot({ token })`, `bot.fetch(req, { token })`, or `TELEGRAM_BOT_TOKEN`
+(a root `.env` is loaded automatically on Bun and Node).
+
+## Options
 
 ```ts
-mode: "webhook",
-webhook: {
-  domain: "https://example.com",
-  port: 3000,
-  path: "/webhook",
-  secretToken: "optional-secret",
-},
+new TelegramAdapter({
+  client: { apiRoot: "http://localhost:8081" }, // local Bot API server, or a fake API in tests
+  botInfo: { id: 123, is_bot: true, first_name: "My Bot", username: "my_bot", /* … */ },
+});
 ```
+
+<TypeTable
+  type={{
+    client: {
+      type: 'ApiClientOptions',
+      description: "grammY's API client options, passed through to the grammY Bot. Use apiRoot for a local Bot API server or a fake API in tests.",
+    },
+    botInfo: {
+      type: 'UserFromGetMe',
+      description: "The bot's own getMe result. When given, startup skips the getMe call. Worth it on serverless, where every cold isolate would otherwise call getMe.",
+    },
+  }}
+/>
+
+On connect the adapter also installs grammY's auto-retry for the Bot API (up to 3 retries, waits of
+at most 10 s), which handles `429 Too Many Requests` with `retry_after`. Network errors are not
+retried; they fail fast (see [Fail-fast startup](#fail-fast-startup)).
+
+## Transports
+
+| Transport | How | Use for |
+| --------- | --- | ------- |
+| Polling (default) | `bot.start()` | Local dev, VPS, containers. No public URL needed. |
+| Webhook server | `mode: "webhook"` + `webhook` + `bot.start()` | Long-running servers with a public HTTPS URL. |
+| Serverless webhook | `bot.fetch(request)` | Cloudflare Workers, Vercel/Deno Edge, `Bun.serve`, Node. |
+
+<Tabs items={['Polling', 'Webhook server', 'Serverless']}>
+<Tab value="Polling">
+
+```ts
+createBot({ router, adapter: new TelegramAdapter() }).start();
+```
+
+`bot.start()` fetches the bot's identity with `getMe`, then starts grammY long polling and logs
+`[telegram] Connected as @my_bot`. Run exactly **one** polling process per token; two processes split
+updates between them. A bot can't poll while a webhook is set: run `teact webhook delete` first.
+
+</Tab>
+<Tab value="Webhook server">
+
+Teact starts a Node HTTP server and registers the webhook with Telegram on startup:
+
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+
+export default defineConfig({
+  mode: "webhook",
+  webhook: {
+    domain: "https://bot.example.com",
+    port: 3000,          // default 3000
+    path: "/webhook",    // default /webhook
+    secretToken: process.env.WEBHOOK_SECRET,
+  },
+});
+```
+
+The webhook URL is `domain` (trailing slashes removed) plus `path`. The server accepts `POST` on
+`path` only (anything else gets `404`), rejects a wrong `X-Telegram-Bot-Api-Secret-Token` with `401`,
+and answers `200` once the update has been handled. A port that is taken fails startup with
+`Port 3000 is already in use`. Put it behind a reverse proxy that terminates TLS.
+
+</Tab>
+<Tab value="Serverless">
+
+`bot.fetch()` handles one update per request through `adapter.webhookCallback()`, a web-standard
+`(Request) => Promise<Response>` built on grammY's `std/http` adapter. You don't start a server;
+register the URL yourself with `teact webhook set <url>`.
+
+```ts title="src/worker.ts"
+import { bot } from "./index";
+
+export default {
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, { token: env.TELEGRAM_BOT_TOKEN, secretToken: env.WEBHOOK_SECRET, env }),
+};
+```
+
+The response resolves only after the reply has been sent and the session saved, so nothing is lost
+when the isolate freezes. A request with the wrong secret gets a `401` before the bot initializes.
+`bot.fetch()` doesn't register the command menu: run `bot.setCommands()` once after deploying. See
+[Deployment](/docs/guides/deployment#serverless--edge-with-botfetch).
+
+</Tab>
+</Tabs>
+
+## What the adapter receives
+
+The adapter bridges these Telegram updates to Teact:
+
+| Telegram update | Teact event | Notes |
+| --------------- | ----------- | ----- |
+| `message` (any kind) | `message` | `ctx.text` is set for text messages; media is reachable through hooks and `ctx.raw`. |
+| `callback_query` with data | `callback_query` | Rendered first, then answered (see below). |
+| `pre_checkout_query` | — | Approved automatically, so [Payments](/docs/guides/payments) can complete. |
+
+Each `BotContext` carries `chatId`, `userId`, `user` (`id`, `username`, `firstName`, `lastName`,
+`isBot`, `languageCode`), `messageId` (the message, or the message a button sits on), `text`,
+`callbackData`, `botUsername` and `raw`, the grammY `Context`. Other update types (inline queries,
+edited messages, chat member changes) are not bridged; handle them with grammY directly, as shown
+in [Using raw grammY](#using-raw-grammy).
+
+## Output guarantees
+
+The adapter cleans up output before sending, so common mistakes don't turn into Bot API errors:
+
+- **HTML escaping.** In HTML mode, user content is escaped, which prevents injection and
+  `can't parse entities` 400s. Text you mark with your own `parseMode` is sent as written.
+- **Length clamping.** Message text is capped at 4096 characters and captions at 1024.
+- **Media groups** are clamped to 2–10 items. A single-item group is sent as a normal media
+  message.
+- **Edit vs. send.** Text is never edited onto a media message, and a message with a reply keyboard
+  is never edited in place. The adapter sends a new message instead. Edits that change nothing
+  ("message is not modified") are ignored.
+- **Callback spinners always stop.** `<Notification>` is delivered through `answerCallbackQuery`
+  after the render, and button presses without one are still answered. An expired query (older than
+  15 minutes) is ignored.
+- **No empty messages.** A `<Message>` without text sends nothing; with buttons it also logs a
+  warning, because Telegram needs text to attach a keyboard.
+
+`serializeOutput(tree)` is exported for tests: it returns the payload (method, text, parse mode,
+keyboards) the adapter would send for an output tree.
 
 ## Adapter surface
 
-| Method | Role |
+`TelegramAdapter` implements the `Adapter` contract from `@teactjs/core`, plus a few
+Telegram-specific methods. You rarely call these yourself; the bot engine does.
+
+| Member | Role |
 | ------ | ---- |
-| `connect({ token })` | Init grammY bot |
-| `listen({ polling?, webhook? })` | Start transport |
-| `send` / `edit` | Output tree → Telegram messages |
-| `clearButtons` | Remove inline keyboard |
-| `setCommands` | Menu commands |
-| `use` | grammY middleware |
-| `disconnect` | Stop |
-| `getBot` | Raw grammY `Bot` |
+| `name` | `"telegram"`. |
+| `connect({ token })` | Create the grammY `Bot` with auto-retry and error logging. Does not start receiving. |
+| `on(event, handler)` / `off(event, handler)` | Subscribe to `message` / `callback_query`. |
+| `listen({ polling?, webhook? })` | Start polling, or the webhook server when `webhook` is given. |
+| `webhookCallback({ secretToken? })` | Web-standard `(Request) => Promise<Response>`, used by `bot.fetch()`. |
+| `send(chatId, tree)` | Output tree → `sendMessage`, `sendPhoto`, `sendMediaGroup`, `sendPoll`, …; resolves the message id. |
+| `edit(chatId, messageId, tree)` | `editMessageText` with the new text and inline keyboard. |
+| `canEdit(tree, chatId?)` | Whether the tree can be applied as an in-place text edit. |
+| `clearButtons(chatId, messageId)` | Remove a message's inline keyboard. |
+| `setCommands(commands)` | `setMyCommands`. |
+| `disconnect()` | Close the webhook server, stop polling. |
+| `use(...middleware)` | Register grammY middleware (after `connect`). |
+| `getBot()` | The raw grammY `Bot` (after `connect`). |
 
-## Plugins (package)
+## Using raw grammY
 
-- **`conversationsPlugin`** + `defineConversation` — see [Conversations](/docs/guides/conversations)
-- **`streamPlugin`** — see [Streaming](/docs/guides/streaming)
+`getBot()` and `use()` throw `Adapter not connected` before `connect()`. The right place to call them
+is a plugin's `onStart`, which runs after the adapter connects and before any update is received, in
+polling, webhook and serverless mode alike.
 
-More: [grammY docs](https://grammy.dev).
+```ts title="src/plugins/inline.ts"
+import type { TeactPlugin } from "@teactjs/core";
+import type { TelegramAdapter } from "@teactjs/telegram";
+
+export function inlineSearch(): TeactPlugin {
+  return {
+    name: "inline-search",
+    onStart(adapter) {
+      const bot = (adapter as TelegramAdapter).getBot();
+
+      // An update type Teact doesn't bridge
+      bot.on("inline_query", async (ctx) => {
+        const q = ctx.inlineQuery.query;
+        await ctx.answerInlineQuery([
+          {
+            type: "article",
+            id: "1",
+            title: `Search for "${q}"`,
+            input_message_content: { message_text: `🔎 ${q}` },
+          },
+        ]);
+      });
+
+      // grammY middleware that runs before Teact sees an update
+      bot.use(async (ctx, next) => {
+        if (ctx.chat?.type === "channel") return; // drop: Teact never sees it
+        await next();                            // pass on to Teact
+      });
+    },
+  };
+}
+```
+
+```ts
+createBot({ router, adapter: new TelegramAdapter(), plugins: [inlineSearch()] });
+```
+
+Middleware you add with `use()` or `getBot().use()` runs **before** the Teact bridge, so it must call
+`next()` for Teact to receive the update. This is how `streamPlugin` installs `@grammyjs/stream`.
+Bot API calls are available anywhere you have the bot: `getBot().api.sendMessage(chatId, "Hi")`.
+
+Inside components and middleware, `ctx.raw` / `useBot().raw` is the grammY `Context` of the current
+update, for fields Teact doesn't map (`ctx.raw.chat.type`, `ctx.raw.message.reply_to_message`).
+
+## Fail-fast startup
+
+`bot.start()` checks the connection before polling:
+
+- No token at all: `bot.start()` logs `No bot token found. Add TELEGRAM_BOT_TOKEN to your .env file.`
+  and exits.
+- A wrong token or an unreachable Telegram: the initial `getMe` call rejects within about a second,
+  and so does `bot.start()`. grammY's own startup would retry forever in the background.
+- Webhook server mode: `bot.start()` rejects if `setWebhook` fails or the port is taken.
+
+Handle the rejection so a bad deploy exits with a clear error and your process manager can report
+it:
+
+```ts title="src/index.tsx"
+if (import.meta.main) {
+  bot.start().catch((err) => {
+    console.error("Bot failed to start:", err);
+    process.exit(1);
+  });
+}
+```
+
+When you pass `botInfo`, the `getMe` check is skipped, so a bad token surfaces on the first Bot API
+call instead. Run `teact doctor` to check the token, the webhook status and your project setup.
+
+<Callout type="info" title="Runtime errors are logged, not thrown">
+Once running, the adapter logs Bot API errors (`[telegram] API error in chat …`), network errors and
+unexpected errors from grammY and keeps going. A failed edit falls back to sending a new message.
+</Callout>
+
+## Plugins in this package
+
+- **`conversationsPlugin`** + `defineConversation`: imperative, step-by-step flows. See
+  [Conversations](/docs/guides/conversations).
+- **`streamPlugin`**: live-updating messages from async generators. See
+  [Streaming](/docs/guides/streaming).
+
+Both need a long-running process; they don't work on serverless.
+
+## Related
+
+<Cards>
+  <Card title="Deployment" href="/docs/guides/deployment" description="Polling, webhook servers and bot.fetch() in production." />
+  <Card title="@teactjs/telegram" href="/docs/packages/telegram" description="Package exports and serializer details." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="onStart, plugin order and the Teact pipeline." />
+  <Card title="Testing" href="/docs/guides/testing" description="MockAdapter instead of Telegram in tests." />
+</Cards>

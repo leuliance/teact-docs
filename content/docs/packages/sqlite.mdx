@@ -1,0 +1,212 @@
+---
+title: "@teactjs/sqlite"
+description: API reference for the synchronous SQLite storage driver, its async view, the durable session store and plugin — bun:sqlite and better-sqlite3.
+---
+
+`@teactjs/sqlite` stores Teact state in a local SQLite file. `SqliteDriver` is a **synchronous**
+`StorageDriver`, so it plugs into `storagePlugin` with no cache layer: every `useStorage` read hits
+the database and every write is committed before the setter returns. The package also ships an async
+view (`SqliteAsyncDriver`), `sqliteSessionStore` and `sqlitePlugin` + `useSqlite` for your own
+queries. It works with `bun:sqlite` (built into Bun) and `better-sqlite3` (Node).
+
+```npm
+npm i @teactjs/sqlite @teactjs/storage
+```
+
+On Node, also install `better-sqlite3` (optional peer, `>=9.0.0`). `bun:sqlite` needs no install.
+Other peers: `@teactjs/core`, `@teactjs/storage`, `@teactjs/plugin-sdk`, `react`.
+
+With the CLI: `teact add sqlite` (`--client bun` default, or `--client better-sqlite3`), or
+`teact create my-bot --db sqlite`.
+
+**When to use**
+
+- A single long-running bot (VPS, container, your laptop) that needs durable state without a
+  database server.
+- Local development and tests with real persistence.
+- Not on serverless or edge — SQLite needs a local file. Use Postgres (Neon) or Cloudflare D1 there.
+
+## Quick example
+
+<Tabs items={['bun:sqlite', 'better-sqlite3']}>
+<Tab value="bun:sqlite">
+
+```ts title="src/db.ts"
+import { storagePlugin } from "@teactjs/storage";
+import { SqliteDriver, sqlitePlugin, sqliteSessionStore } from "@teactjs/sqlite";
+
+// Opens (and creates) ./data/bot.db with bun:sqlite, WAL mode, table created automatically.
+export const sqlite = new SqliteDriver({ path: "./data/bot.db" });
+
+export const plugins = [storagePlugin({ driver: sqlite }), sqlitePlugin({ driver: sqlite })];
+export const sessionStore = sqliteSessionStore(sqlite, { ttl: 7 * 24 * 3600_000 });
+```
+
+To use your own handle: `new SqliteDriver({ db: new Database("./data/bot.db") })` with
+`import { Database } from "bun:sqlite"`.
+
+</Tab>
+<Tab value="better-sqlite3">
+
+```ts title="src/db.ts"
+import Database from "better-sqlite3";
+import { storagePlugin } from "@teactjs/storage";
+import { SqliteDriver, sqlitePlugin, sqliteSessionStore } from "@teactjs/sqlite";
+
+export const sqlite = new SqliteDriver({ db: new Database("./data/bot.db"), closeDb: true });
+
+export const plugins = [storagePlugin({ driver: sqlite }), sqlitePlugin({ driver: sqlite })];
+export const sessionStore = sqliteSessionStore(sqlite, { ttl: 7 * 24 * 3600_000 });
+```
+
+`{ path }` also works on Node: when `bun:sqlite` is unavailable, the driver loads `better-sqlite3`.
+
+</Tab>
+</Tabs>
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { plugins, sessionStore } from "./db";
+import { router } from "./router";
+
+const bot = createBot({ router, adapter: new TelegramAdapter(), plugins, session: { store: sessionStore } });
+if (import.meta.main) bot.start();
+```
+
+Add `data/` to `.gitignore`.
+
+## Exports
+
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `SqliteDriver` | class | `new SqliteDriver(opts?: SqliteDriverOptions \| SqliteDatabase)` | Synchronous `StorageDriver` with TTL, prefixes, `entries` and `incr`. |
+| `SqliteAsyncDriver` | class | `new SqliteAsyncDriver(sync: SqliteDriver)` | `AsyncStorageDriver` over the same database (prefer `driver.asAsync()`). |
+| `sqliteSessionStore` | function | `(source: SqliteDriver \| SqliteDriverOptions \| SqliteDatabase, opts?: CreateSessionStoreOptions) => SessionStore` | Durable, TTL-aware sessions. |
+| `sqlitePlugin` | function | `(opts: SqlitePluginOptions) => TeactPlugin` | Registers the driver as the `'sqlite'` service (plugin name `teact-sqlite`). |
+| `useSqlite` | hook | `() => SqliteDriver` | The registered driver; `.db` is the raw handle. |
+| `SQLITE_SERVICE` | const | `'sqlite'` | Service key. |
+| `createSqliteTableSql` | function | `(table = 'teact_storage') => string` | The DDL the driver runs. |
+| `quoteSqliteIdent` | function | `(name: string) => string` | Validate and double-quote a table name. |
+
+Types: `SqliteDriverOptions`, `SqlitePluginOptions`, `SqliteDatabase` (`prepare`, `exec`,
+`close`), `SqliteStatement` (`get`, `all`, `run`).
+
+## SqliteDriver
+
+<TypeTable
+  type={{
+    path: { type: 'string', description: 'File to open, created with its parent directories if missing. Loads bun:sqlite lazily, falling back to better-sqlite3; enables WAL; the driver owns and closes the handle. ":memory:" for a throw-away database.' },
+    db: { type: 'SqliteDatabase', description: 'An already-open bun:sqlite Database or better-sqlite3 instance. Never closed unless closeDb is set.' },
+    table: { type: 'string', description: 'Table name, a plain identifier.', default: "'teact_storage'" },
+    closeDb: { type: 'boolean', description: 'Close a db you passed in when close() runs.', default: 'false' },
+  }}
+/>
+
+Pass either `path` or `db` (or the database handle itself: `new SqliteDriver(db)`). Without either it
+throws `SqliteDriver needs { path } or { db }`. The table and index are created in the constructor.
+
+### Methods
+
+| Method | Description |
+| ------ | ----------- |
+| `get<T>(key)` | Value, or `undefined` when missing or expired. |
+| `set(key, value, { ttl? })` | Upsert JSON text; `ttl` in ms. `undefined` deletes. |
+| `incr(key, by = 1, { ttl? })` | Atomic `UPSERT … RETURNING` (SQLite ≥ 3.35). Missing or expired → 0; `ttl` only when created. Throws `the value at "key" is not a number` for non-numbers. |
+| `delete(key)`, `has(key)` | Remove / check. |
+| `keys(prefix?)` | Live keys, sorted. |
+| `entries(prefix = '')` | Live `[key, value]` pairs in one query. |
+| `clear(prefix?)` | Delete under `prefix`, or the whole table. |
+| `purgeExpired()` | Delete expired rows; returns the count. |
+| `asAsync()` | The `SqliteAsyncDriver` view (always the same instance). |
+| `close()` | Close the handle if the driver owns it. Idempotent. |
+
+Properties: `db` (the raw handle, for your own tables) and `table`.
+
+### Storage format
+
+```sql
+CREATE TABLE IF NOT EXISTS "teact_storage" (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER);
+CREATE INDEX IF NOT EXISTS "teact_storage_expires_at_idx" ON "teact_storage" (expires_at) WHERE expires_at IS NOT NULL;
+```
+
+- Values are JSON text; `expires_at` is a Unix epoch in milliseconds. Expired rows are hidden from
+  every read until `purgeExpired()` deletes them.
+- Prefixes are matched literally (`%`, `_` and `\` escaped) and case-sensitively — SQLite's `LIKE`
+  is case-insensitive for ASCII, so the driver confirms with an exact `substr` comparison.
+- Prepared statements are cached per driver.
+
+## SqliteAsyncDriver
+
+Every method resolves with the synchronous result, so writes are durable before the promise settles.
+It also has `purgeExpired()`. Use it where an async driver is expected — TTL-aware session stores,
+code shared with network databases, or `runDriverConformance`:
+
+```ts title="test/sqlite.test.ts"
+import { describe, test, expect } from "bun:test";
+import { runDriverConformance } from "@teactjs/storage";
+import { SqliteDriver } from "@teactjs/sqlite";
+
+runDriverConformance("sqlite", () => new SqliteDriver({ path: ":memory:" }).asAsync(), { describe, test, expect });
+```
+
+## sqliteSessionStore
+
+```ts
+sqliteSessionStore(sqlite, { ttl: 7 * 24 * 3600_000 });          // share the driver
+sqliteSessionStore({ path: "./data/sessions.db" });              // its own database
+sqliteSessionStore(db, { prefix: "sess:" });                     // a raw handle
+```
+
+It wraps `driver.asAsync()` with `createSessionStore`, so `ttl` is honoured — expired sessions read as
+empty. Options: `prefix` (default `'session:'`) and `ttl` (ms).
+
+## sqlitePlugin and useSqlite
+
+<TypeTable
+  type={{
+    driver: { type: 'SqliteDriver', description: 'Share the driver you also pass to storagePlugin / sqliteSessionStore.' },
+    path: { type: 'string', description: 'Or open a new database (driver option).' },
+    db: { type: 'SqliteDatabase', description: 'Or wrap an open handle (driver option).' },
+    table: { type: 'string', description: 'Driver option.' },
+    closeDb: { type: 'boolean', description: 'Driver option.' },
+    closeOnStop: { type: 'boolean', description: 'Close the database when the bot stops.', default: 'true when opened from path, false for a db or driver you passed in' },
+  }}
+/>
+
+```tsx title="src/screens/Stats.tsx"
+import { useChatId } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { useSqlite } from "@teactjs/sqlite";
+
+export function Stats() {
+  const { db } = useSqlite();
+  const chatId = useChatId();
+  // Synchronous: safe to query during render.
+  const row = db
+    .prepare("SELECT count(*) AS n FROM teact_storage WHERE key LIKE ?")
+    .get(`telegram:${chatId}:%`) as { n: number };
+  return <Message text={`You have ${row.n} saved values.`} />;
+}
+```
+
+<TelegramPreview bot="Notes Bot" user="/stats" text={"You have 3 saved values."} />
+
+## Gotchas
+
+<Callout type="warn" title="Long-running processes only">
+SQLite needs a local, writable file, so it does not work on Cloudflare Workers or other serverless
+platforms. Use `@teactjs/postgres` (Neon) or `@teactjs/cloudflare` (D1) there.
+</Callout>
+
+- `bun:sqlite` failing to open a path, or `better-sqlite3` missing on Node, throws a
+  `[teact/sqlite]` error naming the cause; pass an open database via `{ db }` to control it yourself.
+
+## Related
+
+<Cards>
+  <Card title="Databases guide" href="/docs/guides/databases" description="Choosing and wiring a backend." />
+  <Card title="@teactjs/storage" href="/docs/packages/storage" description="useStorage and the driver interface." />
+  <Card title="@teactjs/cloudflare" href="/docs/packages/cloudflare" description="D1 uses the same SQL on Workers." />
+  <Card title="Testing" href="/docs/guides/testing" description="Use :memory: databases in tests." />
+</Cards>

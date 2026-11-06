@@ -1,45 +1,30 @@
 ---
 title: "@teactjs/plugin-sdk"
-description: Author your own Teact plugins with definePlugin — register middleware, providers, DI services, and lifecycle hooks.
+description: API reference for definePlugin — author Teact plugins that register middleware, React providers, DI services and lifecycle hooks.
 ---
 
+`@teactjs/plugin-sdk` is the authoring kit for Teact plugins. Call `definePlugin` once to describe a
+plugin and get back a factory you drop into `createBot({ plugins })` or `teact.config.ts`. The
+plugin host that *runs* plugins lives in [`@teactjs/core`](/docs/packages/core); this package turns a
+`setup()` function into the `TeactPlugin` object the host expects. The database packages
+(`@teactjs/redis`, `postgres`, `sqlite`, `mongodb`) are built with it.
 
-`@teactjs/plugin-sdk` is the authoring kit for Teact plugins. Call `definePlugin` to describe a
-plugin once and get back a factory you drop into `createBot({ plugins })` or `teact.config.ts`. The
-plugin host that *runs* plugins lives in [`@teactjs/core`](/docs/packages/core) — this package is
-only what you need to build one.
-
-```bash
-bun add @teactjs/plugin-sdk
+```npm
+npm i @teactjs/plugin-sdk @teactjs/core react
 ```
 
-## Exports
+`@teactjs/core` and `react` are peer dependencies.
 
-| Export | Kind | Description |
-| ------ | ---- | ----------- |
-| `definePlugin` | function | `definePlugin({ name, defaultConfig?, setup })` → a `PluginFactory`. |
-| `PluginContext` | type | The context handed to `setup`. |
-| `PluginDefinition` | type | Shape of the object passed to `definePlugin`. |
-| `PluginFactory` | type | The returned factory: `(config?) => TeactPlugin`. |
-| `TeactPlugin`, `ServiceMap`, `Adapter`, `Middleware` | types | Re-exported from `@teactjs/core` so authors have one import. |
+**When to use**
 
-## PluginContext
+- You want to package a client (Supabase, Stripe, an HTTP API) as a service components read with
+  `useService`.
+- You need middleware, a React provider and start/stop hooks bundled behind one config object.
+- You publish a reusable plugin for other Teact bots.
 
-`setup(ctx)` receives a `PluginContext<C>`. Register everything the plugin contributes here:
+## Quick example
 
-| Member | Signature | Purpose |
-| ------ | --------- | ------- |
-| `config` | `C` | Resolved config (`defaultConfig` merged under the user's config). |
-| `middleware` | `(fn: Middleware) => void` | Run on every incoming update. |
-| `addProvider` | `(Comp: FunctionComponent<{ children }>) => void` | Wrap the app tree with a React provider (providers nest in order). |
-| `provideService` | `(key: string, value: unknown) => void` | Register a DI service, read later with `useService(key)`. |
-| `onStart` | `(fn: (adapter: Adapter) => void \| Promise<void>) => void` | Run when the bot starts (after the adapter connects). |
-| `onStop` | `(fn: () => void \| Promise<void>) => void` | Run on shutdown. |
-
-## Example
-
-```ts
-// my-supabase-plugin.ts
+```ts title="src/plugins/supabase.ts"
 import { definePlugin } from "@teactjs/plugin-sdk";
 import { createClient } from "@supabase/supabase-js";
 
@@ -51,27 +36,203 @@ export const supabase = definePlugin<{ url: string; key: string }>({
 });
 ```
 
-Register it, then read the service anywhere with `useService`:
-
-```ts
-// teact.config.ts
+```ts title="teact.config.ts"
 import { defineConfig } from "@teactjs/core";
-import { supabase } from "./my-supabase-plugin";
+import { supabase } from "./src/plugins/supabase";
 
 export default defineConfig({
   plugins: [supabase({ url: process.env.SUPABASE_URL!, key: process.env.SUPABASE_KEY! })],
 });
 ```
 
-```tsx
-import { useService } from "@teactjs/core";
-const db = useService<SupabaseClient>("supabase");
+```tsx title="src/screens/Profile.tsx"
+import { useService, useQuery, useChatId } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export function Profile() {
+  const db = useService<SupabaseClient>("supabase");
+  const chatId = useChatId();
+  const { data } = useQuery({
+    key: `profile:${chatId}`,
+    fn: async () => (await db.from("profiles").select("name").eq("chat_id", chatId).single()).data,
+  });
+  return <Message text={data ? `Hi ${data.name}` : "Loading…"} />;
+}
 ```
 
-<Callout type="info">
-On edge runtimes, `teact.config.ts` is not loaded — pass plugins directly via
-`createBot({ plugins })`.
+## Exports
+
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `definePlugin` | function | `<C = void>(def: PluginDefinition<C>) => PluginFactory<C>` | Build a plugin factory. |
+| `PluginContext` | type | `PluginContext<C>` | The context handed to `setup`. |
+| `PluginDefinition` | type | `{ name; defaultConfig?; setup }` | The object passed to `definePlugin`. |
+| `PluginFactory` | type | `(config?: C) => TeactPlugin` | What `definePlugin` returns. |
+| `TeactPlugin` | type | re-export | The plugin object the core host runs. |
+| `ServiceMap` | type | re-export | `Record<string, unknown>`. |
+| `Adapter` | type | re-export | The platform adapter contract. |
+| `Middleware` | type | re-export | `(ctx, next) => Promise<void>`. |
+
+## definePlugin
+
+### PluginDefinition
+
+<TypeTable
+  type={{
+    name: { type: 'string', description: 'Plugin name. Used for logs and for de-duplicating plugins listed in both teact.config.ts and createBot().', required: true },
+    defaultConfig: { type: 'C', description: 'Defaults, shallow-merged under the user\'s config ({ ...defaultConfig, ...config }).' },
+    setup: { type: '(ctx: PluginContext<C>) => void', description: 'Registers everything the plugin contributes. Runs synchronously each time the factory is called.', required: true },
+  }}
+/>
+
+### PluginContext
+
+<TypeTable
+  type={{
+    config: { type: 'C', description: 'Resolved config.' },
+    middleware: { type: '(fn: Middleware) => void', description: 'Add update middleware. Call more than once for several steps; they run in order.' },
+    addProvider: { type: '(provider: FunctionComponent<{ children: ReactNode }>) => void', description: 'Wrap the app tree in a React provider. Several providers nest in order (first is outermost).' },
+    provideService: { type: '(key: string, value: unknown) => void', description: 'Register a DI service, read with useService(key) / useOptionalService(key).' },
+    onStart: { type: '(fn: (adapter: Adapter) => void | Promise<void>) => void', description: 'Run when the bot starts, after the adapter connects. Several hooks run sequentially.' },
+    onStop: { type: '(fn: () => void | Promise<void>) => void', description: 'Run when the bot stops.' },
+  }}
+/>
+
+### What the factory returns
+
+Calling the factory runs `setup` and builds a `TeactPlugin`:
+
+| `TeactPlugin` field | Set when | Value |
+| ------------------- | -------- | ----- |
+| `name` | always | `def.name` |
+| `services` | `provideService` was called | the registered services |
+| `middleware` | `middleware` was called | all steps composed with core's `compose` |
+| `Provider` | `addProvider` was called | the provider, or the providers nested |
+| `onStart` / `onStop` | hooks were registered | runs every hook in order, awaiting each |
+
+## How plugins run
+
+1. **Merge.** `createBot` merges `teact.config.ts` plugins with `createBot({ plugins })`. A name in
+   both lists keeps only the `createBot()` copy; repeats in one list are all kept.
+2. **Services.** Every plugin's `services` are merged into one container (a later plugin's key
+   overrides an earlier one) and provided to all screens.
+3. **Start.** After `adapter.connect()`, each `onStart(adapter)` runs in order. A throwing hook is
+   logged (`Plugin "x" onStart failed`) and the bot continues.
+4. **Updates.** Plugin middleware runs before config and `createBot` middleware, in plugin order.
+5. **Render.** Each plugin `Provider` wraps the tree; later plugins wrap earlier ones.
+6. **Stop.** `bot.stop()` runs each `onStop`; failures are logged.
+
+### Middleware rules
+
+A plugin's middleware follows the same rules as the bot's pipeline: `next()` is implied when a step
+returns without calling it, so returning early does **not** skip the remaining middleware. To stop
+an update, call `halt(ctx)` from `@teactjs/core`.
+
+```ts title="src/plugins/admins-only.ts"
+import { halt } from "@teactjs/core";
+import { definePlugin } from "@teactjs/plugin-sdk";
+
+export const adminsOnly = definePlugin<{ admins: string[] }>({
+  name: "admins-only",
+  defaultConfig: { admins: [] },
+  setup(ctx) {
+    ctx.middleware(async (update) => {
+      if (!ctx.config.admins.includes(update.userId)) halt(update);
+    });
+  },
+});
+```
+
+## Recipes
+
+### Service with lifecycle
+
+```ts title="src/plugins/metrics.ts"
+import { definePlugin } from "@teactjs/plugin-sdk";
+
+interface MetricsConfig { flushMs?: number; endpoint: string }
+
+export const metrics = definePlugin<MetricsConfig>({
+  name: "metrics",
+  defaultConfig: { flushMs: 10_000, endpoint: "" },
+  setup(ctx) {
+    const counts = new Map<string, number>();
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    ctx.provideService("metrics", {
+      inc: (name: string) => counts.set(name, (counts.get(name) ?? 0) + 1),
+    });
+
+    ctx.middleware(async (update, next) => {
+      counts.set("updates", (counts.get("updates") ?? 0) + 1);
+      await next();
+    });
+
+    ctx.onStart(() => {
+      timer = setInterval(() => {
+        fetch(ctx.config.endpoint, { method: "POST", body: JSON.stringify(Object.fromEntries(counts)) });
+        counts.clear();
+      }, ctx.config.flushMs);
+    });
+
+    ctx.onStop(() => clearInterval(timer));
+  },
+});
+```
+
+### Provider plugin
+
+```tsx title="src/plugins/theme.tsx"
+import { createContext, useContext } from "@teactjs/core";
+import { definePlugin } from "@teactjs/plugin-sdk";
+
+const ThemeCtx = createContext({ accent: "🔵" });
+export const useTheme = () => useContext(ThemeCtx);
+
+export const theme = definePlugin<{ accent: string }>({
+  name: "theme",
+  defaultConfig: { accent: "🔵" },
+  setup(ctx) {
+    ctx.addProvider(({ children }) => (
+      <ThemeCtx.Provider value={{ accent: ctx.config.accent }}>{children}</ThemeCtx.Provider>
+    ));
+  },
+});
+```
+
+### Optional dependency between plugins
+
+```tsx
+import { useOptionalService } from "@teactjs/core";
+
+function Footer() {
+  const metrics = useOptionalService<{ inc(name: string): void }>("metrics");
+  metrics?.inc("footer_view");
+  return null;
+}
+```
+
+`useService(key)` throws `No service registered under "key"` with a hint; `useOptionalService`
+returns `undefined`.
+
+## Gotchas
+
+<Callout type="warn" title="Serverless">
+On Cloudflare Workers and other runtimes without a filesystem, `teact.config.ts` is not loaded —
+pass plugins directly in `createBot({ plugins })`. `onStart` runs once per isolate, on the first
+request.
 </Callout>
 
-See the [Middleware & plugins guide](/docs/guides/middleware-plugins) for the full plugin lifecycle
-and DI patterns.
+- `setup` is synchronous; do async work in `onStart`.
+- Every factory call runs `setup` again, so two calls produce two independent plugins (two clients,
+  two timers). Create the plugin once and reuse it.
+- `defaultConfig` is merged shallowly: a nested object in the user config replaces the default one.
+
+## Related
+
+<Cards>
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="Pipeline order, halt and DI patterns." />
+  <Card title="@teactjs/plugins" href="/docs/packages/plugins" description="Ready-made production plugins." />
+  <Card title="@teactjs/core" href="/docs/packages/core" description="useService, compose, halt and TeactPlugin." />
+</Cards>

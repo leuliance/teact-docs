@@ -1,0 +1,529 @@
+---
+title: "@teactjs/plugins"
+description: API reference for the production plugins — rateLimit, logger, maintenance, chatFilter, ignoreOld, errorReporter, analytics + useTrack, featureFlags + useFlag, and createBroadcaster.
+---
+
+`@teactjs/plugins` is a set of ready-made production plugins: flood protection, structured logging,
+maintenance mode, chat and user filters, dropping stale backlog, error reporting, usage analytics,
+feature flags, and a rate-limited broadcaster for mass messaging. Each is a `TeactPlugin` you add to
+`plugins: [...]` (except `createBroadcaster`, which you call where you send). Blocking plugins use
+`halt(ctx)`, so a rejected update never renders and never reaches a command handler.
+
+```npm
+npm i @teactjs/plugins
+```
+
+Peers: `@teactjs/core`, `react`, and `@teactjs/storage` (optional — only needed to pass a
+`storage` driver to `rateLimit` or `analytics`). With the CLI, add one at a time:
+`teact add rate-limit`, `logger`, `maintenance`, `chat-filter`, `ignore-old`, `error-reporter`,
+`analytics`, `feature-flags` or `broadcast` (see [`teact add`](/docs/packages/cli#teact-add)).
+
+**When to use**
+
+- Before going to production: logging, error reporting and flood protection.
+- Running several instances: `rateLimit({ strategy: 'fixed', storage })` and `analytics({ storage })`
+  with a shared driver.
+- Announcements to all users: `createBroadcaster`.
+
+## Quick example
+
+```ts title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import {
+  logger, errorReporter, ignoreOld, maintenance, chatFilter, rateLimit, analytics, featureFlags,
+} from "@teactjs/plugins";
+import * as Sentry from "@sentry/bun";
+
+const ADMIN_ID = 123456789;
+
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  plugins: [
+    logger({ format: "json" }), // first: sees and times everything, including blocked updates
+    errorReporter({ report: (e) => Sentry.captureException(e), notifyUser: "😵 Something broke." }),
+    ignoreOld({ maxAge: 120 }),
+    maintenance({ isEnabled: () => process.env.MAINTENANCE === "1", allow: [ADMIN_ID] }),
+    chatFilter({ allow: ["private"], onBlocked: "Please message me directly." }),
+    rateLimit({ window: 2000, limit: 3, onLimited: "⏳ Slow down!" }),
+    analytics(),
+    featureFlags({ flags: { newMenu: true }, rollout: { newMenu: 25 } }),
+  ],
+});
+
+if (import.meta.main) bot.start();
+```
+
+<TelegramPreview bot="Shop Bot" user="/start" text={"⏳ Slow down!"} caption="The fourth message within 2 s" />
+
+## Exports
+
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `rateLimit` | plugin | `(options?: RateLimitOptions) => TeactPlugin` | Flood protection (`teact-rate-limit`). |
+| `logger` | plugin | `(options?: LoggerOptions) => TeactPlugin` | Log every update (`teact-logger`). |
+| `maintenance` | plugin | `(options?: MaintenanceOptions) => TeactPlugin` | Maintenance mode (`teact-maintenance`). |
+| `DEFAULT_MAINTENANCE_MESSAGE` | const | `string` | `'🛠 The bot is under maintenance. Please try again a bit later.'` |
+| `chatFilter` | plugin | `(options?: ChatFilterOptions) => TeactPlugin` | Chat type / user allow- and deny-lists (`teact-chat-filter`). |
+| `ignoreOld` | plugin | `(options?: IgnoreOldOptions) => TeactPlugin` | Drop stale messages (`teact-ignore-old`). |
+| `errorReporter` | plugin | `(options: ErrorReporterOptions) => TeactPlugin` | Report middleware and render errors (`teact-error-reporter`). |
+| `analytics` | plugin | `(options?: AnalyticsOptions) => AnalyticsPlugin` | Usage counters + `track`/`getStats` (`teact-analytics`). |
+| `useTrack` | hook | `() => (name, properties?) => Promise<void>` | Record custom events from components. |
+| `ANALYTICS_SERVICE` | const | `'teact-analytics'` | DI key of the analytics service. |
+| `featureFlags` | plugin | `(options: FeatureFlagsOptions) => FeatureFlagsPlugin` | Flags with predicates and rollouts (`teact-feature-flags`). |
+| `useFlag` | hook | `(name: string) => boolean` | Read a flag in a component. |
+| `rolloutBucket` | function | `(input: string) => number` | Stable 0–99 bucket (FNV-1a). |
+| `FEATURE_FLAGS_SERVICE` | const | `'teact-feature-flags'` | DI key of the flags service. |
+| `createBroadcaster` | function | `(options: BroadcasterOptions) => Broadcaster` | Rate-limited mass messaging. |
+| `chatTypeOf` | function | `(ctx: BotContext) => ChatType \| undefined` | Chat type of an update. |
+| `updateDateOf` | function | `(ctx: BotContext) => number \| undefined` | Unix seconds the message was sent (none for callbacks). |
+| `textMessage` | function | `(text: string) => OutputNode` | Build a plain `tg-message` node. |
+
+Types: `RateLimitOptions`, `LoggerOptions`, `LogEntry`, `LogLevel`, `LogSink`, `LoggerLike`,
+`RedactableField`, `MaintenanceOptions`, `ChatFilterOptions`, `ChatFilterReason`, `IgnoreOldOptions`,
+`ErrorReporterOptions`, `ErrorReportInfo`, `ReportField`, `AnalyticsOptions`, `AnalyticsEvent`,
+`AnalyticsStats`, `AnalyticsService`, `AnalyticsPlugin`, `FeatureFlagsOptions`,
+`FeatureFlagsService`, `FeatureFlagsPlugin`, `FlagValue`, `Broadcaster`, `BroadcasterOptions`,
+`BroadcastSendOptions`, `BroadcastMessage`, `BroadcastResult`, `BroadcastProgress`,
+`BroadcastFailure`, `ChatId`, `Reply`, `ReplyFn`, `ChatType`
+(`'private' | 'group' | 'supergroup' | 'channel'`), `UpdateKind`
+(`'message' | 'command' | 'callback_query'`).
+
+## Shared concepts
+
+### How blocking works (halt)
+
+Plugin middleware runs in `plugins` order, before `teact.config.ts` and `createBot` middleware and
+before your components. A plugin that rejects an update calls `halt(ctx)` from `@teactjs/core`:
+nothing after it runs, the component is **not rendered**, and the chat's current screen and button
+handlers stay intact. Every update goes through these plugins, including commands with an inline
+`handler`, so a halted update never reaches the handler either.
+
+**Order matters.** Put `logger` and `errorReporter` first (they only see what runs after them), cheap
+filters next (`ignoreOld`, `maintenance`, `chatFilter`, `rateLimit`), and `analytics` after the
+filters if you only want to count accepted updates.
+
+### The Reply type
+
+Options such as `onLimited`, `onBlocked` and `message` accept a `Reply`:
+
+```ts
+type Reply = string | OutputNode | ((ctx: BotContext, reply: ReplyFn) => void | Promise<void>);
+type ReplyFn = (message: string | OutputNode) => Promise<void>;
+```
+
+- a `string` is sent as a plain text message;
+- an `OutputNode` is sent as-is (e.g. a message with buttons);
+- a function gets full control, with a `reply` helper bound to the chat.
+
+Replies go through the adapter captured in the plugin's `onStart`. Send failures are logged, never
+thrown into the pipeline.
+
+```ts
+import { rateLimit } from "@teactjs/plugins";
+
+rateLimit({
+  onLimited: async (ctx, reply) => {
+    await reply(`⏳ ${ctx.user.firstName}, please wait a moment.`);
+  },
+});
+
+rateLimit({
+  onLimited: {
+    type: "tg-message",
+    props: { text: "⏳ Too fast. Need help?" },
+    children: [{ type: "tg-keyboard", props: {}, children: [
+      { type: "tg-button", props: { text: "Help", callbackData: "__route:/help" }, children: [] },
+    ] }],
+  },
+});
+```
+
+### Shared state across instances
+
+`rateLimit` and `analytics` keep counters in memory by default. Pass any `@teactjs/storage` driver
+(sync or async, e.g. a [`RedisDriver`](/docs/packages/redis)) as `storage` to share them. Values are
+stored in `{ v, e }` envelopes so TTL works on drivers without native expiry.
+
+When the driver has an atomic `incr()` — Redis, Postgres, SQLite, D1 and MongoDB do, Cloudflare KV
+doesn't — counters are **exact across instances**. Without it, increments are serialized per process
+and read-modify-write across instances, so under heavy concurrency a few hits may be lost.
+
+## rateLimit
+
+Counts updates (messages **and** button presses) per key and blocks those over `limit` per
+`window`. A blocked update is halted; `onLimited` is sent at most once per window, so the bot never
+floods the flooder.
+
+<TypeTable
+  type={{
+    window: { type: 'number', description: 'Window length in milliseconds. Must be > 0.', default: '1000' },
+    limit: { type: 'number', description: 'Max updates per key per window. Must be >= 1.', default: '3' },
+    key: { type: "'user' | 'chat' | ((ctx: BotContext) => string | null | undefined)", description: '"user": per user across chats; "chat": one budget per chat; a function: custom key — return null/undefined to skip limiting (e.g. admins).', default: "'user'" },
+    strategy: { type: "'sliding' | 'fixed'", description: 'Sliding window (smooth, exact in one process) or aligned fixed buckets (one atomic counter per key and window).', default: "'sliding'" },
+    onLimited: { type: 'Reply', description: 'Notice when a key goes over the limit, at most once per window. Omit to drop silently.' },
+    storage: { type: 'AnyStorageDriver', description: 'Driver for the counters, to share limits across instances.', default: 'in-process memory' },
+    prefix: { type: 'string', description: 'Key prefix in storage.', default: "'teact:ratelimit:'" },
+  }}
+/>
+
+### Fixed vs sliding across instances
+
+| | `sliding` (default) | `fixed` |
+| - | ------------------- | ------- |
+| Counting | Timestamps of hits in the last `window` ms | One counter per `floor(now / window)` bucket |
+| Bursts | None at window boundaries | Up to `2 × limit` across a boundary |
+| Storage ops | Read-modify-write of a record, serialized per key in this process | One `incr()` per hit |
+| Several instances | Exact within one process only | **Exact globally** with an atomic-`incr` driver |
+| Notice | Once per window | When the count first exceeds `limit` in a bucket |
+
+```ts title="src/plugins.ts"
+import Redis from "ioredis";
+import { RedisDriver } from "@teactjs/redis";
+import { rateLimit } from "@teactjs/plugins";
+
+const redis = new Redis(process.env.REDIS_URL!);
+const ADMINS = new Set(["123456789"]);
+
+export const plugins = [
+  // Per user: 3 updates per 2 s, smooth.
+  rateLimit({ window: 2000, limit: 3, onLimited: "⏳ Slow down a bit!" }),
+  // Per chat, shared by every instance: 20 per minute.
+  rateLimit({
+    window: 60_000,
+    limit: 20,
+    key: (ctx) => (ADMINS.has(ctx.userId) ? null : `chat:${ctx.chatId}`),
+    strategy: "fixed",
+    storage: new RedisDriver({ client: redis, namespace: "mybot:" }),
+  }),
+];
+```
+
+Repeating `rateLimit` in one `plugins` list is intentional and both copies run. Register it early so
+blocked updates skip the rest of the pipeline.
+
+## logger
+
+Logs every update (type, chat, user, truncated text or callback data), how long the rest of the
+pipeline took, and any error thrown by later middleware (logged, then re-thrown).
+
+<TypeTable
+  type={{
+    level: { type: "'debug' | 'info' | 'warn' | 'error'", description: 'Minimum level. "debug" also logs update.start.', default: "'info'" },
+    format: { type: "'pretty' | 'json'", description: 'One human-readable line, or one JSON object per line.', default: "'pretty'" },
+    logger: { type: 'LogSink | LoggerLike', description: 'A sink (entry, line) => void, or a console-like object (console, pino, winston).', default: 'console' },
+    redact: { type: "RedactableField[] | ((entry: LogEntry) => LogEntry)", description: 'Fields to replace with "[redacted]" (text, callbackData, username, userId, chatId), or a function returning the entry to log.' },
+    maxTextLength: { type: 'number', description: 'Max characters of message text.', default: '100' },
+  }}
+/>
+
+`LogEntry`: `level`, `time` (ISO), `event` (`'update.start'` | `'update'` | `'update.error'`),
+`type`, `platform`, `chatId`, `chatType?`, `userId`, `username?`, `text?`, `callbackData?`,
+`durationMs?`, `halted?` (a later plugin blocked it), `error?` (`{ name, message, stack? }`).
+
+```text title="pretty output"
+2026-11-06T10:15:02.114Z INFO  ← command chat 42 (private) @ana "/start" 38.2ms
+2026-11-06T10:15:03.020Z INFO  ← callback_query chat 42 (private) @ana [callback] "__route:/shop" 21.7ms
+2026-11-06T10:15:03.300Z INFO  ← message chat 42 (private) @ana "hi" 0.4ms [blocked]
+```
+
+```ts
+import pino from "pino";
+const log = pino();
+
+logger({ format: "json", redact: ["text", "username"] });
+logger({ logger: (entry) => log[entry.level](entry) });
+```
+
+<Callout type="info" title="Render errors">
+Render errors are caught by Teact's error boundary and never reach middleware, so `logger` does not
+see them. Use `errorReporter` to capture those.
+</Callout>
+
+## maintenance
+
+While enabled, every update from a user not in `allow` is halted and answered with `message`.
+
+<TypeTable
+  type={{
+    enabled: { type: 'boolean', description: 'Static switch. Ignored when isEnabled is set.', default: 'true' },
+    isEnabled: { type: '() => boolean | Promise<boolean>', description: 'Dynamic switch, checked on every update (env var, flag service, DB row).' },
+    message: { type: 'Reply | null', description: 'Reply to blocked users. null = silent.', default: 'DEFAULT_MAINTENANCE_MESSAGE' },
+    allow: { type: 'Array<string | number>', description: 'User ids that bypass maintenance (admins, testers).' },
+  }}
+/>
+
+```ts
+maintenance({
+  isEnabled: async () => (await flags.get("maintenance")) === "on",
+  allow: [123456789],
+  message: "🛠 Back in 10 minutes!",
+});
+```
+
+<TelegramPreview bot="Shop Bot" user="/start" text={"🛠 The bot is under maintenance. Please try again a bit later."} />
+
+## chatFilter
+
+Restricts where and for whom the bot works. Rejected updates are halted.
+
+<TypeTable
+  type={{
+    allow: { type: "ChatType[]", description: 'Chat types the bot responds in. Unknown types are blocked when set.', default: 'all' },
+    users: { type: 'Array<string | number>', description: 'User allow-list. Everyone else is blocked.' },
+    block: { type: 'Array<string | number>', description: 'Deny-list of user or chat ids. Always wins.' },
+    onBlocked: { type: 'Reply', description: 'Sent when an update is blocked.', default: 'silent' },
+  }}
+/>
+
+Checks run in order — `block` (reason `'blocked'`), then `users` (`'user'`), then `allow`
+(`'chat-type'`); these are the `ChatFilterReason` values. The chat type is read from the raw
+update (`ctx.raw.chat.type` and the raw message's chat); if it can't be determined, a chat with
+`chatId === userId` counts as `'private'`.
+
+```ts
+chatFilter({ allow: ["private"], block: [666], onBlocked: "Please DM me instead." });
+chatFilter({ users: [ADMIN_ID] }); // internal admin bot
+```
+
+## ignoreOld
+
+After downtime Telegram delivers the whole backlog; `ignoreOld` halts messages older than
+`maxAge`, so the bot doesn't answer hour-old `/start`s.
+
+<TypeTable
+  type={{
+    maxAge: { type: 'number', description: 'Max age in seconds.', default: '300' },
+    onIgnored: { type: '(ctx: BotContext, age: number) => void', description: 'Called for every dropped update; age in seconds.' },
+  }}
+/>
+
+The date comes from the raw message (`date`, Unix seconds). Updates without a date — notably button
+presses — always pass.
+
+```ts
+ignoreOld({ maxAge: 60, onIgnored: (ctx, age) => console.log(`dropped ${ctx.chatId}, ${Math.round(age)}s old`) });
+```
+
+## errorReporter
+
+Captures errors and sends them to your tracker (Sentry, Bugsnag, a Slack webhook…), optionally
+telling the user.
+
+<TypeTable
+  type={{
+    report: { type: '(error: unknown, ctx: BotContext, info: ErrorReportInfo) => void | Promise<void>', description: 'Send the error to your tracker. Failures are caught and logged.', required: true },
+    notifyUser: { type: 'string | OutputNode', description: 'Shown to the user on failure. For render errors it replaces Teact\'s default fallback.', default: 'none (middleware) / Teact fallback (render)' },
+    include: { type: 'ReportField[]', description: 'Fields copied into info.context: user, chat, text, callbackData, raw.', default: "['user', 'chat']" },
+    captureRenderErrors: { type: 'boolean', description: 'Also capture component render errors via an error boundary.', default: 'true' },
+  }}
+/>
+
+`ErrorReportInfo`: `source` (`'middleware'` | `'render'`), `context` (`type`, `platform`, and the
+`include`d `user`, `chat`, `text`, `callbackData`, `raw`) and `componentStack` (render errors).
+
+- **Middleware / handler errors** (later plugins, your middleware, `onClick` handlers, and
+  `createBot({ commands })` handlers, which run at the end of the pipeline) are caught, reported and
+  swallowed, so the update finishes cleanly.
+- **Render errors** are caught by a boundary the plugin adds around your app, reported once per
+  update, and replaced by `notifyUser` (or Teact's default fallback). The chat recovers on the next
+  update.
+- `raw` is the plain Telegram update, never the grammY context — that holds `api` and the bot token.
+
+```ts title="src/plugins.ts"
+import * as Sentry from "@sentry/bun";
+import { errorReporter } from "@teactjs/plugins";
+
+export const reporter = errorReporter({
+  report: (err, ctx, info) =>
+    Sentry.captureException(err, {
+      user: { id: ctx.userId },
+      tags: { source: info.source, chat: ctx.chatId },
+      extra: info.context,
+    }),
+  notifyUser: "😵 Something broke. We have been notified!",
+});
+```
+
+<Callout type="warn" title="Personal data">
+Don't add `'text'` or `'raw'` to `include` unless you are fine sending user content to your error
+tracker. The default sends only user and chat ids.
+</Callout>
+
+## analytics and useTrack
+
+Counts every update (total and per UTC day), command usage and unique users per day, forwards events
+to an optional `track` sink, and lets components record custom events.
+
+<TypeTable
+  type={{
+    track: { type: '(event: AnalyticsEvent) => void | Promise<void>', description: 'Forward every event to PostHog, Mixpanel, a DB… Errors are logged, not thrown.' },
+    storage: { type: 'AnyStorageDriver', description: 'Driver for the counters; share it across instances.', default: 'memory' },
+    prefix: { type: 'string', description: 'Key prefix in storage.', default: "'teact:analytics:'" },
+    retentionDays: { type: 'number', description: 'How long per-day counters are kept.', default: '90' },
+  }}
+/>
+
+`AnalyticsEvent`: `name` (`'update'` or your event), `platform`, `chatId`, `userId`, `timestamp`
+(ms), `properties` (`update` events carry `{ type, command? }`).
+
+The returned `AnalyticsPlugin` is also the service (`ANALYTICS_SERVICE`):
+
+| Member | Description |
+| ------ | ----------- |
+| `track(name, ctx, properties?)` | Record a custom event for an update context. |
+| `getStats(day?)` | `AnalyticsStats`: `day`, `updates` (all time), `updatesOnDay`, `uniqueUsers`, `commands`, `events`. `day` is `YYYY-MM-DD` (UTC), default today. |
+
+- Recording runs in parallel with the rest of the pipeline (no added latency) but is awaited before
+  the update finishes, so counts survive on serverless.
+- Only Telegram-shaped command names (`[a-z0-9_]{1,32}`) are counted, and at most 100 distinct
+  command or event names; the rest count as `(other)`.
+- Totals, daily counts and unique users use the driver's atomic `incr()` when available.
+
+```tsx title="src/index.tsx"
+import { analytics } from "@teactjs/plugins";
+
+const stats = analytics({
+  track: (e) => posthog.capture({ distinctId: e.userId, event: e.name, properties: e.properties }),
+});
+
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  plugins: [stats],
+  commands: {
+    stats: {
+      description: "Usage stats",
+      handler: async (c) => {
+        const s = await stats.getStats();
+        await c.reply(`Today: ${s.updatesOnDay} updates from ${s.uniqueUsers} users`);
+      },
+    },
+  },
+});
+```
+
+`useTrack()` returns a stable `track(name, properties?)` bound to the current user and chat. Call it
+from event handlers, not during render. It throws without the `analytics()` plugin.
+
+```tsx title="src/screens/Pricing.tsx"
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { useTrack } from "@teactjs/plugins";
+
+export function Pricing() {
+  const track = useTrack();
+  return (
+    <Message text="Pro is $5/month.">
+      <InlineKeyboard>
+        <Button text="Upgrade" route="/checkout" />
+        <Button text="Not now" onClick={() => track("upgrade_declined", { plan: "pro" })} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+## featureFlags and useFlag
+
+Flags with per-user predicates and percentage rollouts, evaluated once per update by the middleware
+(async predicates allowed) and read synchronously in components.
+
+<TypeTable
+  type={{
+    flags: { type: 'Record<string, FlagValue>', description: 'Flag definitions: a boolean or (ctx) => boolean | Promise<boolean>. Unknown flags are always false.', required: true },
+    rollout: { type: 'Record<string, number>', description: 'Percentage (0-100) per flag. ANDed with flags; a flag only listed here counts as true before the rollout.' },
+  }}
+/>
+
+- A user is in a rollout when `rolloutBucket(flag + ":" + userId) < percentage` — a stable FNV-1a
+  hash, so the same user always gets the same answer.
+- A predicate that throws is logged and treated as off.
+- The plugin exposes `isEnabled(name, ctx)` (async). The service (`FEATURE_FLAGS_SERVICE`) also has
+  `get(name, ctx)` — the precomputed value, with a sync-only fallback outside a normal update.
+
+```ts title="src/plugins.ts"
+import { featureFlags } from "@teactjs/plugins";
+
+export const flags = featureFlags({
+  flags: {
+    newMenu: true,
+    betaSearch: (ctx) => BETA_TESTERS.includes(ctx.userId),
+    premium: async (ctx) => (await db.user(ctx.userId)).premium,
+  },
+  rollout: { newMenu: 20 },
+});
+```
+
+```tsx title="src/screens/Menu.tsx"
+import { useFlag } from "@teactjs/plugins";
+
+export function Menu() {
+  return useFlag("newMenu") ? <NewMenu /> : <OldMenu />;
+}
+```
+
+`useFlag` throws without the `featureFlags()` plugin.
+
+## createBroadcaster
+
+Sends one message to many chats while respecting Telegram's rate limits. It is not a plugin — call it
+from a command handler, cron job or admin script; a large broadcast takes `recipients / rate`
+seconds.
+
+<TypeTable
+  type={{
+    adapter: { type: "Pick<Adapter, 'send'>", description: 'The adapter you pass to createBot.', required: true },
+    recipients: { type: '() => AsyncIterable<ChatId> | Iterable<ChatId>', description: 'Chats to deliver to; stream ids from a DB cursor.', required: true },
+    rate: { type: 'number', description: 'Max messages per second (Telegram allows ~30/s across chats). Must be > 0.', default: '25' },
+    concurrency: { type: 'number', description: 'Max sends in flight.', default: 'rate' },
+    maxRetries: { type: 'number', description: 'Retries per chat on HTTP 429 (honouring retry_after) or transient errors (5xx, network).', default: '3' },
+    onProgress: { type: '(progress: BroadcastProgress) => void', description: 'After each recipient: { processed, sent, failed, blocked }.' },
+  }}
+/>
+
+`broadcaster.send(message, { signal? })`: `message` is a `string`, an `OutputNode`, or
+`(chatId) => string | OutputNode | Promise<…>` for personalization. Aborting with `signal` lets
+already-started sends finish.
+
+`BroadcastResult`: `total`, `sent`, `blocked` (chat ids that returned HTTP 403 — bot blocked,
+kicked or user deactivated; remove them from your list), `failed` (`{ chatId, error }[]` after
+retries), `aborted`, `durationMs`.
+
+On HTTP 429 the **whole broadcast** pauses for `retry_after` (Telegram's flood control is per bot),
+then retries; other retryable errors back off `500 ms × attempt`.
+
+```ts title="src/commands/announce.ts"
+import { createBroadcaster } from "@teactjs/plugins";
+import { adapter } from "../adapter";
+
+export async function announce(text: string, signal?: AbortSignal) {
+  const broadcaster = createBroadcaster({
+    adapter,
+    recipients: async function* () {
+      for await (const u of db.users.cursor()) yield u.chatId;
+    },
+    onProgress: (p) => p.processed % 500 === 0 && console.log(`${p.processed} processed`),
+  });
+  const result = await broadcaster.send((chatId) => `📣 ${text}`, { signal });
+  await db.users.markInactive(result.blocked);
+  return result; // { total, sent, blocked, failed, aborted, durationMs }
+}
+```
+
+## Helpers
+
+| Helper | Description |
+| ------ | ----------- |
+| `chatTypeOf(ctx)` | `raw.chat.type`, the raw message's chat type, or `'private'` when `chatId === userId`. |
+| `updateDateOf(ctx)` | Message date (Unix seconds); `undefined` for callback queries. |
+| `textMessage(text)` | `{ type: 'tg-message', props: { text }, children: [] }`. |
+
+## Related
+
+<Cards>
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="halt, ordering and writing your own." />
+  <Card title="@teactjs/redis" href="/docs/packages/redis" description="Shared counters with atomic incr." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Running several instances." />
+  <Card title="@teactjs/plugin-sdk" href="/docs/packages/plugin-sdk" description="Build your own plugin." />
+</Cards>

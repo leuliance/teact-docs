@@ -1,33 +1,445 @@
 ---
 title: Storage
-description: storagePlugin with file or memory drivers; useStorage and useGlobalStorage for persistent key-value state.
+description: Persistent key-value state with storagePlugin and useStorage — chat-scoped by default, backed by memory, a JSON file or any database driver, sync or async.
 ---
 
-## Plugin
+`@teactjs/storage` gives components persistent state that survives restarts. `useStorage` works like
+`useState`, but the value is saved under a key scoped to the current chat. The backend is pluggable:
+the built-in memory and file drivers cover development and small single-process bots, and the
+database packages (Redis, Postgres, SQLite, MongoDB, Cloudflare) cover production.
+
+Use storage for data that belongs to a chat and must outlive a session: favourites, settings,
+progress, a cart. For short-lived screen or form state, [sessions](/docs/guides/hooks) are often
+enough.
+
+## First example
+
+```npm
+npm i @teactjs/storage
+```
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin, useStorage } from "@teactjs/storage";
+
+const FRUITS = ["🍎 Apple", "🍌 Banana", "🍇 Grapes"];
+
+function Favourites() {
+  // Stored under "telegram:<chatId>:favourites"
+  const [favourites, setFavourites] = useStorage<string[]>("favourites", []);
+
+  const toggle = (fruit: string) =>
+    setFavourites((prev) =>
+      prev.includes(fruit) ? prev.filter((f) => f !== fruit) : [...prev, fruit],
+    );
+
+  return (
+    <Message text={`Your favourites: ${favourites.join(", ") || "none yet"}`}>
+      <InlineKeyboard>
+        <ButtonRow>
+          {FRUITS.map((fruit) => (
+            <Button
+              key={fruit}
+              text={favourites.includes(fruit) ? `★ ${fruit}` : fruit}
+              onClick={() => toggle(fruit)}
+            />
+          ))}
+        </ButtonRow>
+        <ButtonRow>
+          <Button text="Clear" variant="destructive" onClick={() => setFavourites([])} />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+export const bot = createBot({
+  component: Favourites,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: "file", path: "./data/storage.json" })],
+});
+
+if (import.meta.main) bot.start();
+```
+
+<TelegramPreview
+  bot="Fruit Bot"
+  user="/start"
+  text={"Your favourites: 🍌 Banana"}
+  buttons={[["🍎 Apple", "★ 🍌 Banana", "🍇 Grapes"], ["✕ Clear"]]}
+  edited
+/>
+
+Restart the bot and the favourites are still there: the file driver writes `./data/storage.json` on
+every change.
+
+## The plugin
+
+`storagePlugin(options)` picks the backend and provides it to every component. Register it once, in
+`createBot({ plugins })` or `teact.config.ts`.
 
 ```ts
 import { storagePlugin } from "@teactjs/storage";
 
-storagePlugin({
-  driver: "file",
-  path: ".teact/storage.json",
-});
+storagePlugin();                                              // memory (default)
+storagePlugin({ driver: "file", path: ".teact/storage.json" }); // JSON file
+storagePlugin({ driver: new RedisDriver({ client: redis }) });  // any driver instance
 ```
 
-The `file` driver's `path` is a **JSON file** (not a directory). Drivers: `"memory"` (ephemeral), `"file"` (JSON on disk), or a custom **`StorageDriver`**.
+<TypeTable
+  type={{
+    driver: {
+      type: "'memory' | 'file' | StorageDriver | AsyncStorageDriver",
+      description: "'memory' keeps data in a Map and loses it on restart. 'file' stores JSON on disk. Pass a driver instance for anything else.",
+      default: "'memory'",
+    },
+    path: {
+      type: 'string',
+      description: "Path to the JSON **file** used by the 'file' driver (not a directory). Parent folders are created.",
+      default: "'.teact/storage.json'",
+    },
+    preload: {
+      type: 'string[]',
+      description: 'Async drivers only: extra key prefixes loaded into the per-update cache, so useGlobalStorage() can read them synchronously.',
+      default: '[]',
+    },
+  }}
+/>
+
+When the bot stops, the plugin calls `flush()` on a sync driver that has one, or flushes pending
+writes and calls `close()` on an async driver. The plugin's name is `teact-storage`; if you list it in
+both `teact.config.ts` and `createBot({ plugins })`, only the `createBot()` copy is used.
+
+## Sync and async drivers
+
+Drivers come in two kinds, and the plugin handles them differently.
+
+| | Sync driver (`StorageDriver`) | Async driver (`AsyncStorageDriver`) |
+| --- | --- | --- |
+| Examples | `MemoryDriver`, `FileDriver`, `SqliteDriver` | `RedisDriver`, `PostgresDriver`, `MongoDriver`, `D1Driver`, `KVDriver`, `MemoryAsyncDriver` |
+| Marker | none | `readonly async = true` |
+| Reads in render | straight from the driver | from a per-update, per-chat cache |
+| Writes | applied immediately | applied to the cache, written to the backend, awaited before the update ends |
+| `useGlobalStorage()` sees | every key | the current chat's keys and the `preload` prefixes |
+| TTL / `incr` | driver-specific (SQLite supports both) | `set(key, value, { ttl })`; optional atomic `incr` |
+
+`isAsyncDriver(driver)` tells them apart at runtime.
+
+### Built-in drivers
+
+- **`MemoryDriver`** (`driver: "memory"`): a `Map` in the process. Fast, and gone on restart. Each
+  serverless isolate gets its own empty copy.
+- **`FileDriver`** (`driver: "file"`): the whole store in one JSON file. Every `set`, `delete` and
+  `clear` rewrites the file synchronously and atomically (a temp file, then a rename), so a crash
+  can't leave a half-written store. A corrupt file is logged and the store starts empty. Where there
+  is no writable filesystem (Cloudflare Workers), it warns once and keeps data in memory only.
+- **`MemoryAsyncDriver`**: an in-memory async driver with TTL and `incr`. It behaves like a database
+  driver without a server, which makes it the right choice for tests. See
+  [Testing](/docs/guides/testing#storage-with-memoryasyncdriver).
+
+The database drivers are covered in the [Databases guide](/docs/guides/databases).
+
+### How an async driver is used during an update
+
+`useStorage` must return a value synchronously during render, but a database answers
+asynchronously. For an async driver the plugin adds a middleware that wraps every update:
+
+<Steps>
+<Step>
+### Hydrate
+
+Before anything renders, the plugin creates a fresh cache for this update and loads every key of the
+current chat (`<platform>:<chatId>:*`) with one `entries(prefix)` call, plus each `preload` prefix,
+in parallel. Drivers without `entries` fall back to `keys(prefix)` and one `get` per key.
+</Step>
+<Step>
+### Render
+
+Components read from the cache. A setter updates the cache at once, so the next render sees the new
+value, and queues the backend write.
+</Step>
+<Step>
+### Flush
+
+After the rest of the pipeline (your middleware, the render, the send), the plugin awaits every
+queued write. On serverless this means the data has landed before `bot.fetch()` resolves and the
+isolate freezes. If a write fails, the first error is rethrown at the end of the update and logged.
+</Step>
+</Steps>
+
+Each update gets its own cache with only that chat's keys, so chats never see each other's data and
+memory doesn't grow with the number of chats. Because the cache is rebuilt on every update, a value
+written by another instance or another process shows up on the next update.
 
 ## useStorage
 
-Reactive per-key state:
-
-```tsx
-import { useStorage } from "@teactjs/storage";
-
-const [favorites, setFavorites] = useStorage<string[]>("favorites", []);
+```ts
+const [value, setValue] = useStorage<T>(key, defaultValue);
 ```
+
+- **Scoped to the chat.** The full key is `` `${platform}:${chatId}:${key}` ``, for example
+  `telegram:123456:favourites`. Every member of a group chat shares the same value.
+- **Reads through on every render.** The hook doesn't keep its own snapshot; it reads the driver (or
+  the update's cache) each render. A screen that is already mounted shows a value written elsewhere
+  the next time it renders.
+- **`defaultValue`** is returned while nothing is stored. It is not written to the backend.
+- **The setter** takes a value or an updater `(prev) => next`. The updater receives the latest stored
+  value, not the value from the render that created the handler, so quick repeated taps don't lose
+  updates.
+- **Values** should be JSON-compatible: strings, numbers, booleans, `null`, arrays and plain objects.
+  Database drivers store JSON (MongoDB stores BSON), so a `Date` won't come back as a `Date` on most
+  backends. Store `date.toISOString()` or a timestamp.
+
+To remove a value, set it back to the default or use `useGlobalStorage().delete(fullKey)`.
 
 ## useGlobalStorage
 
-Low-level async API: `get`, `set`, `delete`, `has`, `keys`, `clear`.
+`useGlobalStorage()` returns a synchronous `StorageDriver` that is **not** scoped to a chat: `get`,
+`set`, `delete`, `has`, `keys` and `clear`, with full key names.
 
-See [@teactjs/storage](/docs/packages/storage).
+```tsx
+import { useGlobalStorage } from "@teactjs/storage";
+
+function Motd() {
+  const storage = useGlobalStorage();
+  const motd = storage.get<string>("global:motd") ?? "No announcements.";
+  return <Message text={motd} />;
+}
+```
+
+With a sync driver this is the driver itself: every key is visible.
+
+With an async driver it is a view over the current update's cache. It only **reads** keys of the
+current chat and of the `preload` prefixes. Writes to any key are queued and flushed with the update.
+
+```ts
+storagePlugin({ driver: new RedisDriver({ client: redis }), preload: ["global:"] });
+```
+
+<Callout type="warn" title="clear() differs by driver">
+With an async driver, `useGlobalStorage().clear()` clears only the hydrated prefixes: the current
+chat's keys and the `preload` prefixes. With a sync driver it is the driver's own `clear()`, which
+wipes **every** key in the store.
+</Callout>
+
+## useStorageBackend
+
+`useStorageBackend()` returns the driver exactly as you passed it, sync or async. Use it for reads
+outside the cache: other chats' data, large prefixes, aggregates. Typical places are `useQuery`, a
+command handler or a script.
+
+```ts
+import { useStorageBackend, isAsyncDriver } from "@teactjs/storage";
+
+const backend = useStorageBackend();
+if (isAsyncDriver(backend)) {
+  const keys = await backend.keys("leaderboard:");
+}
+```
+
+Writes made through the backend directly are not part of the update's cache and are not awaited by
+the plugin. Await them yourself, or write through `useStorage` / `useGlobalStorage` so they are
+flushed with the update.
+
+## Sessions on a storage driver
+
+Any driver can also back the session store, so `useSession` data survives restarts:
+
+```ts
+import { createSessionStore, FileDriver } from "@teactjs/storage";
+
+createBot({
+  // ...
+  session: {
+    store: createSessionStore(new FileDriver("./data/sessions.json"), {
+      prefix: "session:",          // default
+      ttl: 7 * 24 * 3600_000,      // passed to drivers that support TTL
+    }),
+  },
+});
+```
+
+Sessions are keyed `session:<platform>:<chatId>`. Each database package also ships a ready-made
+store; see [Durable sessions](/docs/guides/databases#durable-sessions).
+
+## Recipes
+
+### Per-user favourites in group chats
+
+`useStorage` is per chat. To keep one list per person inside a group, put the user id in the key:
+
+```tsx
+import { useBot } from "@teactjs/core";
+import { useStorage } from "@teactjs/storage";
+
+function useMyFavourites() {
+  const { userId } = useBot();
+  return useStorage<string[]>(`favourites:${userId}`, []);
+}
+```
+
+In a private chat `chatId` and `userId` are the same, so this costs nothing there.
+
+### Global leaderboard
+
+Each player's score is written to a shared `leaderboard:<userId>` key with `useGlobalStorage()`, so
+the write is flushed with the update. The board reads the whole prefix through `useStorageBackend()`
+inside `useQuery`.
+
+```tsx title="src/pages/Game.tsx"
+import { useBot, useQuery } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+import {
+  useStorage,
+  useGlobalStorage,
+  useStorageBackend,
+  isAsyncDriver,
+  type AnyStorageDriver,
+} from "@teactjs/storage";
+
+type Entry = { name: string; score: number };
+
+async function readPrefix(backend: AnyStorageDriver, prefix: string): Promise<Entry[]> {
+  if (isAsyncDriver(backend)) {
+    const keys = await backend.keys(prefix);
+    const values = await Promise.all(keys.map((k) => backend.get<Entry>(k)));
+    return values.filter((v): v is Entry => v !== undefined);
+  }
+  return backend
+    .keys()
+    .filter((k) => k.startsWith(prefix))
+    .map((k) => backend.get<Entry>(k)!)
+    .filter(Boolean);
+}
+
+export function Game() {
+  const { userId, user } = useBot();
+  const [score, setScore] = useStorage(`score:${userId}`, 0);
+  const global = useGlobalStorage();
+  const backend = useStorageBackend();
+
+  const { data: board, refetch } = useQuery({
+    key: "leaderboard",
+    fn: async () =>
+      (await readPrefix(backend, "leaderboard:")).sort((a, b) => b.score - a.score).slice(0, 5),
+    staleTime: 10_000,
+  });
+
+  const play = () => {
+    const next = score + 1;
+    setScore(next);
+    global.set(`leaderboard:${userId}`, { name: user.firstName ?? "Player", score: next });
+  };
+
+  const lines = (board ?? []).map((e, i) => `${i + 1}. ${e.name} — ${e.score}`);
+
+  return (
+    <Message text={`Your score: ${score}\n\n🏆 Top players\n${lines.join("\n") || "Loading…"}`}>
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button text="+1 point" onClick={play} />
+          <Button text="Refresh board" onClick={() => refetch()} />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview
+  bot="Arcade Bot"
+  user="/start"
+  text={"Your score: 12\n\n🏆 Top players\n1. Sara — 31\n2. Dawit — 18\n3. You — 12"}
+  buttons={[["+1 point", "Refresh board"]]}
+/>
+
+For a counter that many instances increment at the same time, use the driver's atomic `incr()`
+instead of read-modify-write; see [atomic counters](/docs/guides/databases#atomic-counters).
+
+<Callout type="info" title="useQuery after the reply">
+`useQuery` fetches in an effect, after the first render has been sent, and edits the message when the
+data arrives. That works on a long-running bot. On serverless the isolate may freeze before the
+query finishes; there, preload a small prefix and read it with `useGlobalStorage()` instead.
+</Callout>
+
+### Migrating a stored value
+
+Stored data outlives deploys, so a component may meet an old shape. Normalize on read and let the
+next write save the new shape:
+
+```tsx
+type Favourite = { id: string; addedAt: number };
+
+// v1 stored string[]; v2 stores Favourite[]
+function migrate(raw: unknown): Favourite[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) =>
+    typeof item === "string" ? { id: item, addedAt: 0 } : (item as Favourite),
+  );
+}
+
+function useFavourites() {
+  const [raw, setRaw] = useStorage<unknown>("favourites", []);
+  const favourites = migrate(raw);
+  const add = (id: string) =>
+    setRaw((prev) => [...migrate(prev), { id, addedAt: Date.now() }]);
+  return { favourites, add };
+}
+```
+
+To rewrite every chat at once, run a one-off script against the driver itself:
+
+```ts title="scripts/migrate-favourites.ts"
+import Redis from "ioredis";
+import { RedisDriver } from "@teactjs/redis";
+import { migrate } from "../src/storage/favourites";
+
+const driver = new RedisDriver({ client: new Redis(process.env.REDIS_URL!), closeClient: true });
+
+for (const key of await driver.keys("telegram:")) {
+  if (!key.endsWith(":favourites")) continue;
+  await driver.set(key, migrate(await driver.get(key)));
+}
+await driver.close();
+```
+
+### Renaming a key
+
+Read the old key as a fallback until it has been copied:
+
+```tsx
+const [settings, setSettings] = useStorage<Settings | null>("settings:v2", null);
+const [legacy] = useStorage<Settings | null>("prefs", null);
+const current = settings ?? legacy ?? DEFAULT_SETTINGS;
+```
+
+Write only through `setSettings`; once every active chat has saved once, the fallback can go.
+
+## Gotchas
+
+<Callout type="warn" title="Async work in onClick is not awaited">
+Button handlers run synchronously at the start of the update. A setter from `useStorage` or
+`useGlobalStorage` is safe because the write is queued and flushed with the update. A direct
+`await backend.set(…)` inside `onClick` is fire-and-forget: on serverless it can be lost.
+</Callout>
+
+- **Only read keys you hydrate.** With an async driver, `useGlobalStorage().get()` returns
+  `undefined` for a key outside the chat and `preload` prefixes, even if it exists in the database.
+- **Keep `preload` small.** Every prefix is fetched on every update.
+- **Last write wins.** Two chats setting the same global key at the same moment don't merge. Use
+  `incr()` for counters.
+- **The file and memory drivers are single-process.** Two instances each have their own copy. Use a
+  database driver as soon as you run more than one process or deploy to serverless.
+- **`teact.config.ts` is not loaded on the edge.** Pass `storagePlugin` to `createBot({ plugins })`
+  there; see [Deployment](/docs/guides/deployment#edge-checklist).
+
+## Related
+
+<Cards>
+  <Card title="Databases" href="/docs/guides/databases" description="Redis, Postgres, SQLite, MongoDB and Cloudflare drivers, TTL and atomic counters." />
+  <Card title="@teactjs/storage" href="/docs/packages/storage" description="Full export reference for the storage package." />
+  <Card title="Testing" href="/docs/guides/testing" description="Exercise storage code paths with MemoryAsyncDriver." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Storage on serverless and edge runtimes." />
+</Cards>

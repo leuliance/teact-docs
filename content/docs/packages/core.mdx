@@ -1,121 +1,66 @@
 ---
 title: "@teactjs/core"
-description: The Teact engine — createBot, the router, every hook, the plugin host, the React reconciler, and re-exported React primitives.
+description: API reference for the Teact engine — createBot, the router, every hook, conversations and forms, auth, i18n, payments, the plugin host, the reconciler and the re-exported React primitives.
 ---
 
-
 `@teactjs/core` is the engine. It contains the React reconciler that turns your components into
-Telegram output, the runtime that drives a bot (`createBot`), the router, the plugin/DI host, and
-**every hook**. It also re-exports the React primitives you need so you rarely import `react`
-directly.
+Telegram output, the runtime that drives a bot (`createBot`), the router, the plugin and
+dependency-injection host, and **every hook**. It also re-exports the React primitives you need, so
+you rarely import `react` directly. Visual components (`Message`, `Button`, …) live in
+[`@teactjs/ui`](/docs/packages/ui); the Telegram transport lives in
+[`@teactjs/telegram`](/docs/packages/telegram).
 
-This is the single import for everything that isn't a visual component — components live in
-[`@teactjs/ui`](/docs/packages/ui).
-
-```bash
-bun add @teactjs/core
+```npm
+npm i @teactjs/core react
 ```
 
-```tsx
-import { createBot, createRouter, useSession } from "@teactjs/core";
-```
+`react` (`^18.0.0 || ^19.0.0`) is a peer dependency. `react-reconciler`, `i18next` and
+`react-i18next` are regular dependencies and install automatically.
 
-## Exports
+**When to use**
 
-### React primitives (re-exported)
+- Always — every Teact bot imports `createBot` and its hooks from here.
+- When you write middleware (`halt`, `compose`), route guards (`redirect`) or a custom adapter
+  (the `Adapter` contract).
+- When you need translations without the extras of [`@teactjs/i18n`](/docs/packages/i18n)
+  (`createI18n`, `useLocale`).
 
-`useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`, `useContext`, `useId`,
-`use`, `createContext`, `memo`, `Fragment`, `createElement`, `Suspense`.
+## Quick example
 
-### Engine & reconciler
-
-`createRoot`, `TNode`, `TextNode` — plus the platform-neutral types `TeactRoot`, `OutputNode`,
-`User`, `BotContext`, `SessionData`, `SessionStore`, `Middleware`, `Adapter`. Most apps never touch
-these directly; they are the contract adapters and plugins build against.
-
-### Bot
-
-`createBot`, `ROUTE_PREFIX`. Types: `CreateBotOptions`, `CommandContext`, `CommandDef`,
-`ReplyOptions`, `ReplyButton`, `ReplyKeyboardButton`, `WebhookConfig`.
-
-### Session & middleware
-
-`MemorySessionStore`, `compose`, `commandMiddleware`.
-
-### Router
-
-`createRouter`, `useNavigate`, `useParams`, `useRoute`, `redirect`. Types: `RouterConfig`,
-`NavigateOptions`, `NavigateMode`, `BeforeLoadContext`, `RouteGuard`, `GuardRedirect`,
-`GuardComponent`, `GuardReply`, `GuardReplyOptions`, `GuardButton`, `RouteValue`,
-`CreateRouterOptions`, `PathParams`, `RouteCommand`, `ResolvedRouteCommand`.
-
-### Flows
-
-`useConversation`, `useForm`, `useConversationContext`, `useFormContext`, `Conversation`, `Form`.
-
-### Streaming
-
-`useStream`; type `UseStreamResult`.
-
-### Auth
-
-`authPlugin`, `useAuth`, `useAuthSession`. Types: `AuthConfig`, `AuthState`, `AuthTokens`,
-`AuthSessionState`.
-
-### Plugins & dependency injection
-
-`TeactPlugin` (type), `ServicesCtx`, `useService`, `useOptionalService`; type `ServiceMap`. To
-*author* a plugin, use [`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk).
-
-### Config
-
-`defineConfig`; type `TeactConfig`.
-
-### Data hooks
-
-`useQuery`, `useMutation`, and `ErrorBoundary` (all also re-exported from `@teactjs/ui`).
-
-### Runtime context hooks
-
-`useBot`, `useSession`, `usePlatform`, `useChatId`, `useText`, `useCallbackData`, `useCommand`.
-
-### Telegram context hooks
-
-`useChat`, `useTelegram`, `usePhoto`, `useVideo`, `useAnimation`, `useAudio`, `useVoice`,
-`useDocument`, `useSticker`, `useLocation`, `useContact`, `useVenue`, `usePoll`, `useMedia`.
-
-### Events
-
-`useOn`, `useEventData`. Types: `TelegramEvent`, `EventContext`.
-
-### i18n
-
-`createI18n`, `useLocale`; type `I18nConfig`.
-
-### Payments
-
-`useInvoice`. Types: `InvoiceConfig`, `InvoiceResult`, `LabeledPrice`, `SuccessfulPayment`.
-
-## Example
-
-```tsx
-import { createBot, createRouter, useSession } from "@teactjs/core";
-import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+```tsx title="src/index.tsx"
+import { createBot, createRouter, useSession, useNavigate } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 import { TelegramAdapter } from "@teactjs/telegram";
 
 function Home() {
-  const [session] = useSession<{ name?: string }>();
+  const [session, setSession] = useSession<{ visits?: number }>();
+  const visits = (session.visits ?? 0) + 1;
   return (
-    <Message text={`Hi ${session.name ?? "there"}!`}>
+    <Message text={`Welcome back! Visit #${visits}`}>
       <InlineKeyboard>
-        <Button text="About" route="/about" />
+        <ButtonRow>
+          <Button text="Count again" onClick={() => setSession({ visits })} />
+          <Button text="About" route="/about" />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+function About() {
+  const navigate = useNavigate();
+  return (
+    <Message text="Built with Teact.">
+      <InlineKeyboard>
+        <Button text="Back" onClick={() => navigate("/")} />
       </InlineKeyboard>
     </Message>
   );
 }
 
 const router = createRouter({
-  "/": { component: Home, command: { name: "start", description: "Start" } },
+  "/": { component: Home, command: { name: "start", description: "Open the menu" } },
+  "/about": { component: About, command: { name: "about", description: "About this bot" } },
 });
 
 const bot = createBot({ router, adapter: new TelegramAdapter() });
@@ -123,4 +68,821 @@ const bot = createBot({ router, adapter: new TelegramAdapter() });
 if (import.meta.main) bot.start();
 ```
 
-See the [Router guide](/docs/guides/router) and [Hooks reference](/docs/guides/hooks) for details.
+<TelegramPreview
+  bot="Demo Bot"
+  user="/start"
+  text={"Welcome back! Visit #1"}
+  buttons={[["Count again", "About"]]}
+/>
+
+## Exports
+
+Every export of `packages/core/src/index.ts`, grouped by purpose.
+
+### React primitives (re-exported from `react`)
+
+`useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`, `useContext`, `useId`,
+`use`, `createContext`, `memo`, `Fragment`, `createElement`, `Suspense`.
+
+These are the same objects as in `react`; importing them from `@teactjs/core` keeps a single React
+instance in your bundle.
+
+### Bot
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `createBot` | `(options: CreateBotOptions) => Bot` | Create a bot instance with `start`, `stop`, `fetch` and `setCommands`. |
+| `getEnv` | `<T = Record<string, unknown>>() => T` | The `env` passed to the latest `bot.fetch(request, { env })`. Throws if none yet. |
+| `ROUTE_PREFIX` | `'__route:'` | Callback-data prefix that encodes "navigate to this route" buttons. |
+| `defineConfig` | `(config: TeactConfig) => TeactConfig` | Typed identity helper for `teact.config.ts`. |
+| `MemorySessionStore` | `class implements SessionStore` | The default in-memory session store with TTL. |
+
+Types: `CreateBotOptions`, `BotFetchOptions`, `CommandContext`, `CommandDef`, `ReplyOptions`,
+`ReplyButton`, `ReplyKeyboardButton`, `WebhookConfig`, `TeactConfig`.
+
+### Middleware
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `halt` | `(ctx: BotContext) => void` | Stop the middleware chain for this update; the component is not rendered. |
+| `isHalted` | `(ctx: BotContext) => boolean` | Whether `halt(ctx)` was called for this update. |
+| `compose` | `(middlewares: Middleware[]) => Middleware` | Chain middleware; `next()` is called automatically if a middleware returns without calling it. |
+| `commandMiddleware` | `(commands: Map<string, (ctx, args) => void \| Promise<void>>) => Middleware` | Dispatch `/command` text to handlers in a `Map`, else call `next()`. |
+
+### Router
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `createRouter` | `(routes, options?: CreateRouterOptions) => RouterConfig` | Build a router from a path → route map. |
+| `useNavigate` | `() => (path: string, opts?: NavigateOptions) => void` | Navigate to another route. |
+| `useParams` | `<P>() => PathParams<P> \| P \| Record<string, string>` | The matched route's `:params`. |
+| `useRoute` | `() => { path: string; params: Record<string, string> }` | Current path and params. |
+| `redirect` | `(path: string) => string` | Readability helper for `beforeLoad` guards (returns `path`). |
+
+Types: `RouterConfig`, `NavigateOptions`, `NavigateMode`, `BeforeLoadContext`, `RouteGuard`,
+`GuardRedirect`, `GuardComponent`, `GuardReply`, `GuardReplyOptions`, `GuardButton`, `RouteValue`,
+`CreateRouterOptions`, `PathParams`, `RouteCommand`, `ResolvedRouteCommand`.
+
+### Conversations and forms
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `useConversation` | `(steps?: StepsConfig \| { validate? }) => ConversationState` | Multi-step flow, declarative (steps) or imperative. |
+| `useForm` | `(schema: Record<string, FormFieldDef>) => FormResult` | Field-by-field form with validation and navigation. |
+| `Conversation` | component + `.Prompt`, `.Ask`, `.Step`, `.Complete` | Compound component for conversations. |
+| `Form` | component + `.Field`, `.Complete` | Compound component for forms. |
+| `useConversationContext` | `() => ConversationState` | Nearest `<Conversation>` state. Throws outside one. |
+| `useFormContext` | `<K>() => FormResult<K>` | Nearest `<Form>` state. Throws outside one. |
+
+Types: `ConversationState`, `FormFieldDef`, `FormResult`, `Validator`, `ValidateFn`, `SchemaLike`,
+`StepDef`, `StepsConfig`, `StepActions`, `ConversationActions`, `FormActions`.
+
+### Runtime context hooks
+
+| Hook | Returns | Description |
+| ---- | ------- | ----------- |
+| `useBot` | `BotContext` | The full context of the current update (`chatId`, `userId`, `user`, `text`, `callbackData`, `raw`, …). |
+| `useSession` | `[T, (patch: Partial<T>) => void]` | Per-chat session and a merge-patch updater. |
+| `usePlatform` | `string` | Platform name, e.g. `"telegram"`. |
+| `useChatId` | `string` | The current chat id. |
+| `useText` | `string \| undefined` | Message text; `undefined` for button presses. |
+| `useCallbackData` | `string \| undefined` | Callback data; `undefined` for normal messages. |
+| `useCommand` | `{ name: string; args: string[] } \| null` | The command that opened this render (handler-less commands only). |
+| `RuntimeContext` | `React.Context<RuntimeContextValue \| null>` | The raw context behind these hooks. |
+
+Type: `RuntimeContextValue` — `{ botCtx, session, updateSession, command }`.
+
+### Telegram and media hooks
+
+| Hook | Returns | Description |
+| ---- | ------- | ----------- |
+| `useChat` | `ChatInfo` | `chatId`, `userId`, `user`, `messageId`, `text`, `callbackData`, `platform`. |
+| `useTelegram` | `TelegramAccess` | `{ api, ctx, chat, from, chatId }` — the grammY API and context. |
+| `useMedia` | `MediaSenders` | All media senders in one object. |
+| `usePhoto` | `(src, opts?) => Promise<any>` | Send a photo (`caption`, `parse_mode`, `has_spoiler`). |
+| `useVideo` | `(src, opts?) => Promise<any>` | Send a video (`caption`, `parse_mode`, `duration`, `width`, `height`, `supports_streaming`). |
+| `useAnimation` | `(src, opts?) => Promise<any>` | Send a GIF (`caption`, `parse_mode`, `duration`, `width`, `height`). |
+| `useAudio` | `(src, opts?) => Promise<any>` | Send audio (`caption`, `parse_mode`, `performer`, `title`, `duration`). |
+| `useVoice` | `(src, opts?) => Promise<any>` | Send a voice note (`caption`, `parse_mode`, `duration`). |
+| `useDocument` | `(src, opts?) => Promise<any>` | Send a file (`caption`, `filename`). |
+| `useSticker` | `(src, opts?) => Promise<any>` | Send a sticker (`emoji`). |
+| `useLocation` | `(latitude, longitude, opts?) => Promise<any>` | Send a location (`live_period`, `horizontal_accuracy`, `heading`, `proximity_alert_radius`). |
+| `useContact` | `(phoneNumber, firstName, opts?) => Promise<any>` | Send a contact (`last_name`, `vcard`). |
+| `useVenue` | `(latitude, longitude, title, address, opts?) => Promise<any>` | Send a venue (`foursquare_id`, `google_place_id`). |
+| `usePoll` | `(question, options: string[], opts?) => Promise<any>` | Send a poll (`is_anonymous`, `type`, `allows_multiple_answers`, `correct_option_id`, `explanation`, `open_period`). |
+
+Types: `ChatInfo`, `TelegramAccess`, `MediaSenders`.
+
+### Events
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `useOn` | `(event: TelegramEvent, handler: (data, ctx: EventContext) => void) => void` | Run a handler once per matching update. |
+| `useEventData` | `<T = any>(event: TelegramEvent) => T \| null` | Read the current update's data for `event`, or `null`. |
+
+Types: `TelegramEvent`, `EventContext`.
+
+### Data fetching and errors
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `useQuery` | `<T>(options: UseQueryOptions<T>) => UseQueryResult<T>` | Cached async read with loading/error state. |
+| `useMutation` | `<T, V = void>(options: UseMutationOptions<T, V>) => UseMutationResult<T, V>` | Async write with loading/error state. |
+| `ErrorBoundary` | `class component` | Catch render errors and show a fallback. |
+| `CallbackRegistryCtx` | `React.Context<{ handlers: CallbackMap } \| null>` | Where buttons register `onClick` handlers (used by `@teactjs/ui`). |
+
+Types: `UseQueryOptions`, `UseQueryResult`, `UseMutationOptions`, `UseMutationResult`,
+`ErrorBoundaryProps`, `CallbackHandler`, `CallbackMap`. `@teactjs/ui` re-exports the hooks and
+`ErrorBoundary`.
+
+### Streaming
+
+`useStream(opts?: { throttleMs?: number }): UseStreamResult` — stream text from an async iterable
+into a message with throttled re-renders.
+
+### Auth
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `authPlugin` | `(config?: AuthConfig) => TeactPlugin` | Role-based access from static user-id lists. |
+| `useAuth` | `() => AuthState` | Current user's `isAdmin`, `role`, `is()`, `hasAny()`. Requires `authPlugin`. |
+| `useAuthSession` | `() => AuthSessionState` | Token storage (`login`, `logout`, `setAccessToken`) in the chat session. |
+
+Types: `AuthConfig`, `AuthState`, `AuthTokens`, `AuthSessionState`.
+
+### Plugins and services
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `useService` | `<T = unknown>(key: string) => T` | Read a service contributed by a plugin. Throws if missing. |
+| `useOptionalService` | `<T = unknown>(key: string) => T \| undefined` | Non-throwing variant. |
+| `ServicesCtx` | `React.Context<ServiceMap>` | The DI container context. |
+
+Types: `TeactPlugin`, `ServiceMap`. To author plugins, use
+[`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk).
+
+### i18n
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `createI18n` | `(config: I18nConfig) => I18nInstance` | i18next instance plus a `Provider` with detection and persistence. |
+| `useLocale` | `() => { t, locale, setLocale, availableLocales }` | Translate and switch locale. |
+| `detectLocale` | `(languageCode, available: readonly string[]) => string \| undefined` | Match a language tag against available locales. |
+| `normalizeLocale` | `(code) => string` | `'pt_br'` → `'pt-BR'`, `'ZH-hans-cn'` → `'zh-Hans-CN'`. |
+| `getUserLanguageCode` | `(botCtx) => string \| undefined` | The user's Telegram `language_code`, if any. |
+| `localeCallbackData` | `(locale: string) => string` | Callback data for a "switch to locale" button. |
+| `LOCALE_SESSION_KEY` | `'__locale'` | Default session key for the persisted locale. |
+| `LOCALE_CALLBACK_PREFIX` | `'__teact_locale:'` | Callback-data prefix understood by every i18n `Provider`. |
+
+Types: `I18nConfig`, `I18nInstance`, `I18nLocaleResource`.
+
+### Payments
+
+`useInvoice(config: InvoiceConfig): InvoiceResult` — send a Telegram invoice and track its status.
+Types: `InvoiceConfig`, `InvoiceResult`, `LabeledPrice`, `SuccessfulPayment`.
+
+### Engine and adapter contract
+
+| Export | Signature | Description |
+| ------ | --------- | ----------- |
+| `createRoot` | `(onCommit: (tree: OutputNode) => void) => TeactRoot` | Create a reconciler root; `onCommit` receives the serialized tree after each commit. |
+| `TNode` | `class` | Mutable host node used by the reconciler (`appendChild`, `removeChild`, `insertBefore`, `serialize`). |
+| `TextNode` | `class extends TNode` | Text node; serializes to `{ type: '#text', props: { value } }`. |
+
+Types: `TeactRoot` (`render(element)`, `unmount()`), `OutputNode`, `User`, `BotContext`,
+`SessionData`, `SessionStore`, `Middleware`, `Adapter`. See [The Adapter contract](#the-adapter-contract).
+
+## createBot
+
+```ts
+function createBot(options: CreateBotOptions): Bot;
+```
+
+Provide either a `component` (single screen) or a `router` (multi-screen). Without either,
+`createBot` throws `Provide either \`component\` or \`router\``.
+
+### CreateBotOptions
+
+<TypeTable
+  type={{
+    adapter: { type: 'Adapter', description: 'The platform adapter, e.g. new TelegramAdapter().', required: true },
+    router: { type: 'RouterConfig', description: 'A router from createRouter(). Commands declared with command: on routes are registered automatically.' },
+    component: { type: 'FunctionComponent<any>', description: 'Single root component, used when there is no router.' },
+    providers: { type: 'FunctionComponent<{ children: ReactNode }>', description: 'Your own provider component, wrapped outside all plugin Providers.' },
+    token: { type: 'string', description: 'Bot token. Falls back to bot.fetch(req, { token }) or process.env.TELEGRAM_BOT_TOKEN.' },
+    mode: { type: "'polling' | 'webhook'", description: 'Transport for bot.start(). Overrides teact.config.ts.', default: "'polling'" },
+    webhook: { type: 'WebhookConfig', description: 'Webhook server settings for mode: "webhook". Overrides teact.config.ts.' },
+    session: { type: '{ store?: SessionStore; ttl?: number }', description: 'Session store (wins over teact.config.ts) and TTL in ms for the default MemorySessionStore.', default: 'MemorySessionStore, 24 h' },
+    middleware: { type: 'Middleware[]', description: 'Appended after teact.config.ts middleware.' },
+    plugins: { type: 'TeactPlugin[]', description: 'Merged with teact.config.ts plugins; same-name duplicates across the two lists keep the createBot() copy.' },
+    commands: { type: 'Record<string, CommandDef>', description: 'Extra commands. Merged over router commands (same name: this one wins).' },
+    experimental: { type: 'Record<string, unknown>', description: 'Opt-in experimental flags.' },
+    debug: { type: 'boolean', description: 'Log every update, render, middleware run and error with timestamps.', default: 'false' },
+  }}
+/>
+
+### The bot instance
+
+| Member | Signature | Description |
+| ------ | --------- | ----------- |
+| `start` | `() => Promise<void>` | Stop a previous hot-reloaded instance, initialize, register the command menu, start polling (or the webhook server when `mode: 'webhook'` and `webhook` are set) and install SIGINT/SIGTERM handlers. Exits the process if no token is found. |
+| `stop` | `() => Promise<void>` | Unmount every chat, run plugin `onStop` hooks, disconnect the adapter. |
+| `fetch` | `(request: Request, opts?: BotFetchOptions) => Promise<Response>` | Serverless webhook handler. Initializes once per isolate, processes one update per request. |
+| `setCommands` | `() => Promise<number>` | Register the command menu (`setMyCommands`); resolves the number of commands. |
+
+### BotFetchOptions
+
+<TypeTable
+  type={{
+    token: { type: 'string', description: 'Bot token for this request (e.g. env.TELEGRAM_BOT_TOKEN). Falls back to createBot({ token }) / TELEGRAM_BOT_TOKEN.' },
+    secretToken: { type: 'string', description: 'Webhook secret. A request whose X-Telegram-Bot-Api-Secret-Token header differs gets 401 before any initialization.' },
+    env: { type: 'unknown', description: 'Platform bindings for this request (Cloudflare Workers env). Read them anywhere with getEnv().' },
+  }}
+/>
+
+```ts title="src/worker.ts"
+import { bot } from "./bot";
+
+export default {
+  fetch: (request: Request, env: Env) =>
+    bot.fetch(request, {
+      token: env.TELEGRAM_BOT_TOKEN,
+      secretToken: env.WEBHOOK_SECRET,
+      env,
+    }),
+};
+```
+
+`bot.fetch()` does not register the command menu, so cold starts stay cheap. Call
+`bot.setCommands()` once after deploying — see [Deployment](/docs/guides/deployment).
+
+### Commands
+
+`CommandDef` describes a command passed in `createBot({ commands })`. Commands declared on routes
+(`command:`) produce the same shape.
+
+<TypeTable
+  type={{
+    description: { type: 'string', description: 'Shown in Telegram\'s command menu.', required: true },
+    handler: { type: 'string | ((ctx: CommandContext) => Promise<void> | void)', description: 'A static reply, or a function. Replaces the render step; middleware still runs.' },
+    route: { type: 'string', description: 'Route to open when the command arrives.' },
+    deepLink: { type: '(args: string[]) => string', description: 'Map command arguments (e.g. /start payload) to a route path. Falls back to route when it returns nothing or there are no args.' },
+  }}
+/>
+
+`CommandContext` (the handler argument):
+
+<TypeTable
+  type={{
+    args: { type: 'string[]', description: 'Words after the command.' },
+    reply: { type: '(text: string, options?: ReplyOptions) => Promise<void>', description: 'Send a message to the chat.' },
+    chatId: { type: 'string', description: 'Chat id.' },
+    user: { type: '{ id: string; username?: string; firstName?: string }', description: 'The sender.' },
+    platform: { type: 'string', description: 'Platform name.' },
+    raw: { type: 'any', description: 'The adapter\'s raw context (grammY Context on Telegram).' },
+  }}
+/>
+
+`ReplyOptions` has `buttons?: ReplyButton[][]` (inline rows of `{ text, url?, route? }`) and
+`replyKeyboard?: ReplyKeyboardButton[][]` (rows of `{ text, requestContact?, requestLocation? }`,
+sent with `resizeKeyboard`).
+
+```tsx title="src/index.tsx"
+const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  commands: {
+    help: { description: "Show help", handler: "Use /start to open the menu." },
+    echo: {
+      description: "Echo your words",
+      handler: (ctx) => ctx.reply(ctx.args.join(" ") || "Nothing to echo"),
+    },
+    menu: {
+      description: "Open the menu",
+      handler: (ctx) =>
+        ctx.reply("Where to?", {
+          buttons: [[{ text: "Shop", route: "/shop" }, { text: "Docs", url: "https://teact.dev" }]],
+        }),
+    },
+    item: {
+      description: "Open an item",
+      route: "/",
+      deepLink: (args) => `/items/${args[0]}`,
+    },
+  },
+});
+```
+
+Command names are matched case-insensitively, and a `@botname` suffix (`/help@my_bot`) is ignored.
+
+### TeactConfig and defineConfig
+
+`teact.config.ts` (or `.js` / `.mjs`) in the working directory is loaded automatically when the bot
+initializes. It holds infrastructure settings only.
+
+<TypeTable
+  type={{
+    mode: { type: "'polling' | 'webhook'", description: 'Transport mode.', default: "'polling'" },
+    webhook: { type: 'WebhookConfig', description: 'Webhook server settings (required for mode: "webhook").' },
+    plugins: { type: 'TeactPlugin[]', description: 'Plugins loaded at startup.' },
+    middleware: { type: 'Middleware[]', description: 'Global middleware, run before createBot({ middleware }).' },
+    session: { type: '{ store?: SessionStore; ttl?: number }', description: 'Session store override and TTL.' },
+  }}
+/>
+
+`WebhookConfig`: `{ domain: string; port?: number; path?: string; secretToken?: string }`.
+
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+import { storagePlugin } from "@teactjs/storage";
+
+export default defineConfig({
+  mode: "polling",
+  plugins: [storagePlugin()],
+});
+```
+
+### getEnv
+
+Returns the `env` from the most recent `bot.fetch(request, { env })`. Drivers and session stores
+accept lazy getters, so a bot created at module scope can reach Workers bindings without importing
+`cloudflare:workers`:
+
+```ts title="src/bot.tsx"
+import { createBot, getEnv } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+
+export const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
+});
+```
+
+### Update lifecycle
+
+For every incoming message or button press:
+
+1. Updates for the same chat are **serialized** — the next waits for the previous to finish
+   rendering and sending. Different chats run concurrently.
+2. A route button (`__route:<path>`) or a known `/command` marks the chat's screen for reset.
+3. Plugin middleware runs, then `teact.config.ts` middleware, then `createBot({ middleware })`.
+   `halt(ctx)` stops here and leaves the current screen and its handlers intact.
+4. The reset happens; a `handler` command runs its handler, otherwise the tree renders.
+5. The tree is wrapped (inside-out) in `Suspense`, an `ErrorBoundary`, each plugin `Provider`, your
+   `providers`, then the runtime contexts.
+6. The commit is sent or edited according to the navigate mode, and pending session writes are
+   awaited before the update finishes.
+
+## Router
+
+```ts
+function createRouter<const T extends Record<string, RouteValue>>(
+  routes: T,
+  options?: CreateRouterOptions,
+): RouterConfig;
+```
+
+A `RouteValue` is a component, or `{ component, beforeLoad?, command? }`.
+
+<TypeTable
+  type={{
+    component: { type: 'FunctionComponent<any>', description: 'Screen to render.', required: true },
+    beforeLoad: { type: 'RouteGuard', description: 'Runs before the route loads; may redirect, render something else or reply.' },
+    command: { type: 'RouteCommand', description: '{ name, description, deepLink? } — registers /name to open this route.' },
+  }}
+/>
+
+`CreateRouterOptions` has one field, `notFound?: FunctionComponent<any>` (default: a "Page not
+found" message that suggests `/start`).
+
+### Matching
+
+- `:name` segments capture one path segment (`[^/]+`).
+- More specific routes match first: deeper paths win, and at equal depth a static route beats a
+  param route, so `/pokemon/list` is not shadowed by `/pokemon/:id`.
+- A trailing slash is ignored (`/pokemon/` matches `/pokemon`).
+- The default route is `/`, or the first route if there is no `/`.
+
+### Navigation modes
+
+`useNavigate()(path, { mode })` controls what happens to the previous message:
+
+| `NavigateMode` | Behaviour |
+| -------------- | --------- |
+| `replace` (default) | Edit the current message in place (falls back to sending when an edit isn't possible, e.g. text → photo). |
+| `push` | Keep the old message, send the new one below. |
+| `stack` | Strip buttons from the old message, send the new one below. |
+| `dismiss` | Strip buttons from the old message, send nothing. |
+
+### Guards
+
+`RouteGuard` is `(ctx: BeforeLoadContext) => void | string | GuardRedirect | GuardComponent | GuardReply | ReactElement`.
+`BeforeLoadContext` is `{ path, params, session, reply }`.
+
+| Return value | Effect |
+| ------------ | ------ |
+| `undefined` | Load the route. |
+| a path string / `redirect('/x')` | Redirect (the same path is treated as "load"). |
+| `{ redirect, message?, buttons? }` | Redirect. |
+| `{ component }` | Render that component instead. |
+| a JSX element | Render it instead. |
+| `reply(text, { buttons })` | Send a message with route/url buttons (`GuardButton`: `{ text, route?, url? }`). |
+
+```tsx title="src/router.tsx"
+import { createRouter, redirect } from "@teactjs/core";
+
+export const router = createRouter(
+  {
+    "/": Home,
+    "/orders/:id": {
+      component: Order,
+      beforeLoad: ({ session, reply }) => {
+        if (!session.userId)
+          return reply("Please log in first.", {
+            buttons: [[{ text: "Log in", route: "/login" }, { text: "Menu", route: "/" }]],
+          });
+      },
+    },
+    "/admin": {
+      component: Admin,
+      beforeLoad: ({ session }) => (session.isAdmin ? undefined : redirect("/")),
+    },
+  },
+  { notFound: NotFound },
+);
+```
+
+<Callout type="warn" title="Guards fail closed">
+A guard that throws renders the `notFound` screen and logs the error; it never falls through to the
+protected component. More than 5 chained redirects are treated as a loop and also render `notFound`.
+Components rendered by a guard can still read `useParams()`.
+</Callout>
+
+### Typed params
+
+```ts
+const { id } = useParams<"/pokemon/:id">();               // { id: string }
+const { tid, mid } = useParams<"/team/:tid/member/:mid">(); // { tid: string; mid: string }
+const { id: x } = useParams<{ id: string }>();             // explicit shape
+const params = useParams();                                 // Record<string, string>
+```
+
+`PathParams<P>` is the type that extracts `:param` names from a template.
+
+## Sessions
+
+`useSession<T>()` returns `[session, update]`. `update(patch)` merges the patch into the session and
+queues a write to the store. Writes for one update are chained in call order and awaited before the
+update finishes, so they are not lost on serverless.
+
+The default store is `MemorySessionStore(ttl = 24 h)`. Its extra members are `size` and
+`cleanup()` (drop expired entries). Sessions are keyed per chat as `<platform>:<chatId>`.
+
+`SessionStore` is the contract for custom stores:
+
+```ts
+interface SessionStore {
+  get(key: string): Promise<SessionData | null>;
+  set(key: string, data: SessionData): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+```
+
+Durable stores ship in [`@teactjs/storage`](/docs/packages/storage) (`createSessionStore`) and the
+database packages.
+
+## Middleware
+
+`Middleware` is `(ctx: BotContext, next: () => Promise<void>) => Promise<void>`. `compose` calls
+`next()` for you when a middleware returns without calling it, so "not calling next" does **not**
+block an update — call `halt(ctx)` instead.
+
+```ts title="src/middleware.ts"
+import { halt, type Middleware } from "@teactjs/core";
+
+const ADMINS = ["123456789"];
+
+export const adminsOnly: Middleware = async (ctx) => {
+  if (!ADMINS.includes(ctx.userId)) halt(ctx);
+};
+
+export const timing: Middleware = async (ctx, next) => {
+  const t = Date.now();
+  await next();
+  console.log(`${ctx.chatId} handled in ${Date.now() - t} ms`);
+};
+```
+
+Calling `next()` explicitly after `halt(ctx)` still continues the chain. `next()` called twice in one
+middleware throws `next() called multiple times`.
+
+## Conversations and forms
+
+### useConversation
+
+Declarative mode takes a `StepsConfig` (`Record<string, StepDef>`):
+
+| `StepDef` | Behaviour |
+| --------- | --------- |
+| `{ prompt: string; validate?: Validator }` | Wait for free text, validate it. |
+| `{ ask: string; options: (string \| { text, value })[][] }` | Inline buttons; typing text instead shows "Please pick an option from the buttons above." |
+| `{ render: (done, actions: StepActions) => ReactElement }` | Custom step; call `done(value?)` (default value `'done'`). |
+
+Imperative mode (`useConversation()` or `useConversation({ validate })`) exposes `has`, `get`,
+`set`, `clear`, `prompt(key, text)`, `ask(key, text, options)` and `waitFor(key)`.
+
+`ConversationState` also has `step`, `current`, `complete`, `isWaiting`, `data`, `lastError`,
+`render(onComplete?)`, `back()`, `goTo(key)`, `canGoBack()` and `reset()`. `complete` is always
+`false` in imperative mode.
+
+```tsx title="src/screens/Feedback.tsx"
+import { useConversation } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+
+export function Feedback() {
+  const conv = useConversation({
+    name: { prompt: "What's your name?", validate: (v) => v.trim().length >= 2 || "Too short" },
+    rating: { ask: "Rate us:", options: [["1", "2", "3"], [{ text: "5 stars", value: "5" }]] },
+  });
+
+  return conv.render(() => (
+    <Message text={`Thanks ${conv.data.name}! Rating: ${conv.data.rating}`} />
+  ));
+}
+```
+
+When validation fails, the step is shown again prefixed with `⚠️ <error>`.
+
+### useForm
+
+`FormFieldDef`:
+
+<TypeTable
+  type={{
+    prompt: { type: 'string | ((data: Readonly<Record<string, string>>) => string)', description: 'Question, or a function of the answers so far.', required: true },
+    options: { type: 'string[][]', description: 'Show inline buttons (rows) instead of waiting for text.' },
+    validate: { type: 'Validator', description: 'A function returning true | "error", or any object with safeParse() (Zod, Standard Schema).' },
+  }}
+/>
+
+`FormResult` has `complete`, `data`, `render(onComplete?)`, `back()`, `goTo(key)`, `canGoBack()`
+and `reset()`.
+
+```tsx title="src/screens/Signup.tsx"
+import { useForm } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { z } from "zod";
+
+export function Signup() {
+  const form = useForm({
+    name: { prompt: "Your name?", validate: z.string().min(2) },
+    region: { prompt: (d) => `Hi ${d.name}! Pick a region:`, options: [["Kanto", "Johto"]] },
+  });
+  return form.render(() => <Message text={`${form.data.name} from ${form.data.region}`} />);
+}
+```
+
+### Compound components
+
+```tsx
+<Conversation>
+  <Conversation.Prompt name="name" text="What's your name?" />
+  <Conversation.Ask name="color" text="Pick:" options={[["Red", "Blue"]]} />
+  <Conversation.Step name="confirm">
+    {(done, { back }) => <Confirm onYes={() => done("yes")} onBack={back} />}
+  </Conversation.Step>
+  <Conversation.Complete>
+    {(conv) => <Message text={`${conv.data.name} chose ${conv.data.color}`} />}
+  </Conversation.Complete>
+</Conversation>
+
+<Form>
+  <Form.Field name="email" prompt="Email?" validate={(v) => v.includes("@") || "Invalid email"} />
+  <Form.Complete>{(form) => <Message text={`Saved ${form.data.email}`} />}</Form.Complete>
+</Form>
+```
+
+Pass `value={conv}` / `value={form}` to drive them from a hook instead. Without `.Complete`, a
+finished flow renders `✓`. Steps are read from children once, on first render.
+
+## Events
+
+`TelegramEvent` is one of `'*'`, `message`, `text`, `photo`, `video`, `audio`, `voice`, `document`,
+`sticker`, `contact`, `location`, `venue`, `animation`, `video_note`, `poll`, `poll_answer`,
+`callback_query`, `inline_query`, `new_chat_members`, `left_chat_member`, `dice`, `game`,
+`web_app_data`, `successful_payment`, `pre_checkout_query`.
+
+`EventContext`: `{ navigate, chatId, userId, user, reply(text), raw }`. `useOn` handlers run in an
+effect, at most once per update and event.
+
+```tsx
+useOn("contact", (contact, ctx) => {
+  ctx.reply(`Got your number: ${contact.phone_number}`);
+  ctx.navigate("/thanks");
+});
+
+const location = useEventData<{ latitude: number; longitude: number }>("location");
+```
+
+## Data hooks
+
+<TypeTable
+  type={{
+    key: { type: 'string', description: 'Cache key. Changing it re-fetches.', required: true },
+    fn: { type: '() => Promise<T>', description: 'Fetcher.', required: true },
+    enabled: { type: 'boolean', description: 'Fetch on mount.', default: 'true' },
+    staleTime: { type: 'number', description: 'ms before cached data is refetched.', default: '30000' },
+    refetchInterval: { type: 'number', description: 'Polling interval in ms; 0 disables.', default: '0' },
+  }}
+/>
+
+`UseQueryResult<T>`: `data`, `error`, `isLoading`, `isError`, `isSuccess`, `refetch()`. The cache is
+module-level and shared across chats by `key`, so include the chat or user id in keys for per-user
+data.
+
+`UseMutationOptions<T, V>`: `fn(variables)`, `onSuccess?(data)`, `onError?(error)`.
+`UseMutationResult<T, V>`: `data`, `error`, `isLoading`, `isError`, `isSuccess`,
+`mutate(variables)` (resolves `undefined` on error) and `reset()`.
+
+```tsx title="src/screens/Profile.tsx"
+import { useQuery, useChatId } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+
+export function Profile() {
+  const chatId = useChatId();
+  const { data, isLoading, error } = useQuery({
+    key: `profile:${chatId}`,
+    fn: () => fetch(`https://api.example.com/users/${chatId}`).then((r) => r.json()),
+  });
+  if (isLoading) return <Message text="Loading…" />;
+  if (error) return <Message text="Could not load your profile." />;
+  return <Message text={`Hello ${data.name}`} />;
+}
+```
+
+`ErrorBoundaryProps`: `fallback?: ReactNode | ((error, retry) => ReactNode)`,
+`onError?: (error, info) => void`, `children`.
+
+## Streaming
+
+`useStream({ throttleMs = 500 })` returns `{ text, isStreaming, stream(source) }`. `stream()` resets
+`text`, iterates the async iterable and re-renders at most once per `throttleMs`, with a final flush.
+Starting a new stream cancels the previous one. See [Streaming](/docs/guides/streaming).
+
+## Auth
+
+`AuthConfig`: `admins?: (string | number)[]`, `roles?: Record<string, (string | number)[]>`.
+`AuthState`: `userId`, `isAdmin`, `role` (`'admin'`, the first matching role, or `null`),
+`is(role)` (admins pass every check), `hasAny(...roles)`.
+
+`useAuthSession()` stores tokens under `session.auth`. `AuthSessionState`: `isAuthenticated` (has a
+non-expired access token), `accessToken`, `refreshToken`, `expiresAt`, `login(tokens)`, `logout()`,
+`setAccessToken(token, expiresAt?)`. See [Auth](/docs/guides/auth).
+
+## i18n
+
+<TypeTable
+  type={{
+    defaultLocale: { type: 'string', description: 'Used when nothing was persisted or detected.', required: true },
+    resources: { type: 'Record<string, I18nLocaleResource>', description: 'Per-locale i18next resources, each with a translation object.', required: true },
+    fallbackLocale: { type: 'string', description: 'Locale for missing keys.', default: 'defaultLocale' },
+    detect: { type: 'boolean', description: 'Detect the initial locale from the user\'s language_code.', default: 'true' },
+    persist: { type: 'boolean', description: 'Persist the chosen locale in the session.', default: 'true' },
+    sessionKey: { type: 'string', description: 'Session key for the persisted locale.', default: "'__locale'" },
+    onLocaleChange: { type: '(locale: string, previous: string) => void', description: 'Called after setLocale switches to a different valid locale.' },
+  }}
+/>
+
+`I18nInstance`: `Provider`, `instance` (i18next), `availableLocales`, `resolveLocale(code)`. The
+initial locale is: persisted session value → detected `language_code` → `defaultLocale`.
+`setLocale()` ignores unknown locales with a warning. A button with
+`localeCallbackData('fr')` switches locale with no in-memory handler, so it works on serverless.
+
+```ts
+detectLocale("pt-br", ["en", "pt"]);    // "pt"
+detectLocale("en_US", ["en-US", "en"]); // "en-US"
+detectLocale("pt", ["en", "pt-BR"]);    // "pt-BR"
+detectLocale("xx", ["en"]);             // undefined
+```
+
+For built-in UI strings, a `LanguagePicker` and formatting hooks, see
+[`@teactjs/i18n`](/docs/packages/i18n).
+
+## Payments
+
+<TypeTable
+  type={{
+    title: { type: 'string', description: 'Product name.', required: true },
+    description: { type: 'string', description: 'Product description.', required: true },
+    payload: { type: 'string', description: 'Bot-defined payload, 1-128 bytes, not shown to users. Used to match the successful payment.', required: true },
+    providerToken: { type: 'string', description: 'Provider token from BotFather. May be empty for currency "XTR" (Telegram Stars).', required: true },
+    currency: { type: 'string', description: 'ISO 4217 code, or "XTR".', required: true },
+    prices: { type: 'LabeledPrice[]', description: '{ label, amount } in the smallest currency unit.', required: true },
+    photoUrl: { type: 'string', description: 'Product photo URL.' },
+    photoWidth: { type: 'number', description: 'Photo width.' },
+    photoHeight: { type: 'number', description: 'Photo height.' },
+    photoSize: { type: 'number', description: 'Photo size in bytes.' },
+    needName: { type: 'boolean', description: 'Ask for the full name.' },
+    needPhoneNumber: { type: 'boolean', description: 'Ask for a phone number.' },
+    needEmail: { type: 'boolean', description: 'Ask for an email.' },
+    needShippingAddress: { type: 'boolean', description: 'Ask for a shipping address.' },
+    sendPhoneNumberToProvider: { type: 'boolean', description: 'Pass the phone number to the provider.' },
+    sendEmailToProvider: { type: 'boolean', description: 'Pass the email to the provider.' },
+    isFlexible: { type: 'boolean', description: 'Final price depends on shipping.' },
+    maxTipAmount: { type: 'number', description: 'Maximum tip.' },
+    suggestedTipAmounts: { type: 'number[]', description: 'Up to 4 suggested tips.' },
+    startParameter: { type: 'string', description: 'Deep-link parameter.' },
+    providerData: { type: 'string', description: 'JSON data for the provider.' },
+    protectContent: { type: 'boolean', description: 'Prevent forwarding and saving.' },
+  }}
+/>
+
+`InvoiceResult`: `send()`, `status` (`'idle' | 'pending' | 'success' | 'failed'`), `receipt`
+(`SuccessfulPayment`: `currency`, `totalAmount`, `invoicePayload`, `telegramPaymentChargeId`,
+`providerPaymentChargeId`, `orderInfo?`) and `error`. See [Payments](/docs/guides/payments).
+
+## The Adapter contract
+
+Platform packages implement `Adapter` so the engine never depends on a specific transport.
+
+| Member | Description |
+| ------ | ----------- |
+| `name` | Adapter name. |
+| `requiresToken?` | `false` for adapters that don't talk to a platform (no token needed). |
+| `connect({ token })` | Create the client; does not start receiving. |
+| `on(event, handler)` | Subscribe to `'message'` / `'callback_query'`. |
+| `send(chatId, output)` | Send an `OutputNode` tree; resolves the message id. |
+| `edit(chatId, messageId, output)` | Edit a message in place. |
+| `canEdit(output, chatId?)` | Whether `output` can replace the tracked message in place. |
+| `clearButtons(chatId, messageId)` | Remove inline buttons. |
+| `setCommands(commands)` | Register the command menu. |
+| `listen(opts?)` | Start polling or the webhook server (`{ polling?, webhook? }`). |
+| `disconnect()` | Stop and clean up. |
+| `webhookCallback?(opts?)` | `(Request) => Promise<Response>`; enables `bot.fetch()`. |
+
+`BotContext` carries `chatId`, `userId`, `user` (`User`: `id`, `username?`, `firstName?`,
+`lastName?`, `isBot?`, `languageCode?`, `platform`), `platform`, `messageId?`, `text?`,
+`callbackData?`, `botUsername?` and `raw`. `OutputNode` is `{ type, props, children }`.
+
+## Behaviour notes
+
+### Plugins from teact.config.ts and createBot()
+
+Plugins from both lists are merged. If a plugin with the same `name` appears in **both**, only the
+`createBot()` copy is used (with a warning), so you don't get two driver instances or duplicated
+`onStart`/`onStop`. Repeating a plugin **within one list** is intentional and every copy is kept —
+for example a per-user and a per-chat `rateLimit`. A plugin whose `onStart` throws is logged and
+skipped; the bot still starts.
+
+### Default error screen
+
+Every chat's screen is wrapped in an `ErrorBoundary`. When a render throws, Teact logs the error and
+shows `❌ Something went wrong. Please try again, or use /start to restart.`; the next update
+rebuilds the screen from scratch. The error message is **not** shown to users, since it can carry
+internals such as SQL, paths or tokens. Wrap your own `ErrorBoundary` with a `fallback` to
+customize it:
+
+```tsx
+<ErrorBoundary fallback={(error, retry) => <Message text="Oops — try again." />}>
+  <Profile />
+</ErrorBoundary>
+```
+
+Suspended components show `⏳ Loading…` until they resolve.
+
+### Button presses on a new process
+
+<Callout type="warn" title="onClick handlers are in memory">
+`onClick` handlers live in the memory of the process that rendered the message. If a press arrives
+after a restart or on a fresh serverless isolate, Teact re-renders that screen **in place** (editing
+the message the button is on) from its initial state, and logs a warning. Route buttons
+(`<Button route="/settings" />`) work on any instance; on serverless, prefer them and keep screen
+state in `useSession` / `useStorage`.
+</Callout>
+
+### Serverless
+
+- `bot.fetch()` rejects a wrong secret with `401` before any work (no `getMe`, no plugin `onStart`).
+- With the default `MemorySessionStore`, `bot.fetch()` warns once that sessions will not persist
+  between requests. Pass a durable store.
+- `.env` and `teact.config.ts` are only read where a filesystem exists; on Cloudflare Workers both
+  are skipped, so configure plugins in `createBot()`.
+- The adapter must implement `webhookCallback`, otherwise `bot.fetch()` throws.
+
+### Hot reload
+
+`bot.start()` stops the previous instance kept on `globalThis` before starting, so `teact dev`
+restarts don't leave two pollers running.
+
+## Related
+
+<Cards>
+  <Card title="Router guide" href="/docs/guides/router" description="Routes, params, guards and navigation modes in depth." />
+  <Card title="Hooks guide" href="/docs/guides/hooks" description="Every hook with recipes." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="halt, ordering and writing plugins." />
+  <Card title="@teactjs/ui" href="/docs/packages/ui" description="The components your screens render." />
+</Cards>

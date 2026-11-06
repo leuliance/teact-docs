@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T10:40:28.329666Z",
+  "title": "Design System: Teact",
+  "extensions": {
+    "colorMeta": {
+      "safety-orange": {
+        "role": "primary",
+        "displayName": "Safety Orange",
+        "canonical": "#ff5a1f",
+        "tonalRamp": [
+          "#4a1606",
+          "#7a2509",
+          "#a8340d",
+          "#d64313",
+          "#ff5a1f",
+          "#ff8257",
+          "#ffaa8c",
+          "#ffd4c4"
+        ]
+      },
+      "kraft": {
+        "role": "neutral",
+        "displayName": "Kraft Card",
+        "canonical": "#cba574",
+        "tonalRamp": [
+          "#2b2219",
+          "#4d3b27",
+          "#76603f",
+          "#a27f52",
+          "#cba574",
+          "#dcc09a",
+          "#eee3cf",
+          "#f8f3ea"
+        ]
+      },
+      "label": {
+        "role": "neutral",
+        "displayName": "Label Stock",
+        "canonical": "#fdfcf9",
+        "tonalRamp": [
+          "#1a1612",
+          "#3a342c",
+          "#6b6255",
+          "#a39888",
+          "#d9cdb7",
+          "#eee3cf",
+          "#f6f2ea",
+          "#fdfcf9"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#17140f",
+        "tonalRamp": [
+          "#17140f",
+          "#2a251d",
+          "#4a4136",
+          "#6b6052",
+          "#8f8473",
+          "#b3a995",
+          "#d9cdb7",
+          "#f2ebde"
+        ]
+      },
+      "telegram-blue": {
+        "role": "tertiary",
+        "displayName": "Telegram Blue (quoted)",
+        "canonical": "#2aabee",
+        "tonalRamp": [
+          "#06283a",
+          "#0d4566",
+          "#1c7fc0",
+          "#2aabee",
+          "#6fc6f5",
+          "#a6dbf8",
+          "#cfdfe9",
+          "#ecf6fc"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Landing headlines only; Archivo wide black."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section openers; docs h2 under a 2px ink rule."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Reading text, 68ch in docs."
+      },
+      "label": {
+        "displayName": "Field label",
+        "purpose": "Condensed caps field names, table headers, rail groups."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Code, package names, tracking numbers."
+      }
+    },
+    "shadows": [
+      {
+        "name": "hard-sm",
+        "value": "2px 2px 0 0 var(--color-shadow)",
+        "purpose": "Code blocks, callouts, rail active item."
+      },
+      {
+        "name": "hard",
+        "value": "3px 3px 0 0 var(--color-shadow)",
+        "purpose": "Labels, tables, primary buttons."
+      },
+      {
+        "name": "hard-lg",
+        "value": "5px 5px 0 0 var(--color-shadow)",
+        "purpose": "Hero and closing labels only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "press",
+        "value": "transform, box-shadow 120ms cubic-bezier(0.16,1,0.3,1)",
+        "purpose": "Hover lifts 1px with a 4px shadow; active sinks 2px with a 1px shadow."
+      },
+      {
+        "name": "tg-edit",
+        "value": "background-color 420ms cubic-bezier(0.16,1,0.3,1)",
+        "purpose": "Flash on a Telegram message edited in place in the hero demo."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      }
+    ],
+    "components": [
+      {
+        "name": "button-primary",
+        "html": "<button class=\"copy\"><span>$</span><span>bun create teact my-bot</span><span class=\"seg\">Copy</span></button>",
+        "css": ".copy{display:inline-flex;gap:12px;align-items:center;min-height:48px;padding:0 16px;background:#ff5a1f;color:#17140f;border:2px solid #17140f;box-shadow:3px 3px 0 0 #17140f;font-family:'Martian Mono',monospace;font-size:15px}.copy .seg{border-left:2px solid #17140f;padding-left:12px;font:700 11px Archivo;letter-spacing:.08em;text-transform:uppercase}"
+      },
+      {
+        "name": "label-field",
+        "html": "<div class=\"lbl\"><div class=\"hd\">Contents \u00b7 src/index.tsx</div><div class=\"bd\">\u2026</div></div>",
+        "css": ".lbl{background:#fdfcf9;border:2px solid #17140f;box-shadow:3px 3px 0 0 #17140f}.lbl .hd{background:#eee3cf;border-bottom:2px solid #17140f;padding:8px 16px;font:700 11px Archivo;letter-spacing:.08em;text-transform:uppercase;color:#4a4136}.lbl .bd{padding:12px 16px}"
+      },
+      {
+        "name": "callout",
+        "html": "<aside class=\"co\"><div class=\"hd\">Watch out</div><div class=\"bd\">Guards must be synchronous.</div></aside>",
+        "css": ".co{border:2px solid #17140f;box-shadow:2px 2px 0 0 #17140f;background:#fdfcf9}.co .hd{background:#ff5a1f;border-bottom:2px solid #17140f;padding:6px 12px;font:700 11px Archivo;letter-spacing:.08em;text-transform:uppercase}.co .bd{padding:12px 16px}"
+      }
+    ],
+    "narrative": {
+      "northStar": "The Shipping Manifest",
+      "overview": "Teact ships React components to Telegram, so the site is set like freight paperwork: a kraft-card ground, white label stock laid on top, ruled fields with condensed caps for their names, monospace for codes and tracking numbers, and one safety-orange mark for what matters.",
+      "keyCharacteristics": [
+        "Label stock on kraft; ink borders define every container.",
+        "Square corners everywhere except Telegram's own chat bubbles in previews.",
+        "Field labels in condensed caps; values in Archivo or Martian Mono.",
+        "One accent (safety orange) for the primary action, active markers and selection.",
+        "Telegram blue appears only inside rendered Telegram previews."
+      ],
+      "rules": [
+        {
+          "section": "Colors",
+          "name": "The One Mark Rule",
+          "body": "Safety orange marks a single thing per region: the primary action, the active item, or a measured value. It never fills a section."
+        },
+        {
+          "section": "Colors",
+          "name": "The Telegram Is Quoted Rule",
+          "body": "Telegram's own colours appear only where Telegram is being shown, never in the site chrome."
+        },
+        {
+          "section": "Typography",
+          "name": "The One Face Rule",
+          "body": "Hierarchy comes from Archivo's width and weight axes, not from adding faces."
+        },
+        {
+          "section": "Elevation & Depth",
+          "name": "The Paper Stack Rule",
+          "body": "A shadow means a separate sheet of label stock. Never put a shadowed box inside another shadowed box."
+        }
+      ],
+      "dos": [
+        "Do set every container as label stock with a 2px ink border and square corners.",
+        "Do name fields in condensed label caps (wdth 75, 0.08em, uppercase) and put values in Archivo or Martian Mono.",
+        "Do show rendered Telegram output with TelegramPreview next to the code that produces it.",
+        "Do keep docs body text at 68ch and let the frame, not the column, carry the world."
+      ],
+      "donts": [
+        "Don't use gradients, glows, blur or glass.",
+        "Don't round corners outside Telegram previews.",
+        "Don't use Telegram blue in site chrome or safety orange as a fill for a whole section.",
+        "Don't nest a shadowed box inside another shadowed box.",
+        "Don't add eyebrow labels above headings; field labels belong inside labels only."
+      ]
+    }
+  }
+}

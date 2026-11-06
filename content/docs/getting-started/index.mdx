@@ -1,18 +1,30 @@
 ---
 title: Getting started
-description: New to Teact? Install the CLI, create a project, and run your first bot in minutes.
+description: New to Teact? Install Bun and the CLI, scaffold a project, run your first bot, and learn where configuration and fixes live.
 ---
 
-This section walks you from **empty machine** to **running bot** with clear steps.
+This section takes you from an empty machine to a running bot. Read the pages in order the first time; come back to Configuration and Troubleshooting as reference.
 
 ## Path through the docs
 
 <Cards>
-  <Card title="Installation" href="/docs/getting-started/installation" description="Prerequisites, bun create teact, and dependencies." />
-  <Card title="Quick start" href="/docs/getting-started/quick-start" description="Token, bun dev, and a minimal mental model." />
-  <Card title="Configuration" href="/docs/getting-started/configuration" description="teact.config.ts, plugins, sessions, and the edge caveat." />
-  <Card title="Troubleshooting" href="/docs/getting-started/troubleshooting" description="Common startup issues and their fixes." />
+  <Card title="Installation" href="/docs/getting-started/installation" description="Requirements, bun create teact templates and --db options, manual installs, project layout and tsconfig." />
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="BotFather token to a bot with a router, a button, a session counter and a command." />
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="Every teact.config.ts field and createBot option, precedence rules and the edge caveat." />
+  <Card title="Troubleshooting" href="/docs/getting-started/troubleshooting" description="Missing tokens, duplicate pollers, webhooks, serverless buttons, HTML errors and teact doctor." />
+  <Card title="Upgrading from the alpha" href="/docs/getting-started/upgrading" description="Breaking changes for 1.0 as before/after pairs, and recommended updates." />
 </Cards>
+
+## The short version
+
+```bash
+bun create teact my-bot
+cd my-bot
+# add TELEGRAM_BOT_TOKEN=... to .env
+bun dev
+```
+
+Then send `/start` to your bot in Telegram.
 
 <Callout type="info">
   Import **components** from `@teactjs/ui` and **everything else** (`createBot`, hooks, the router,

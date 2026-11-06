@@ -1,0 +1,222 @@
+---
+title: "@teactjs/mongodb"
+description: API reference for the MongoDB storage driver, durable session store and plugin, built on the official mongodb driver (v5, v6, v7).
+---
+
+`@teactjs/mongodb` stores Teact state in a MongoDB collection, one document per key: a `MongoDriver`
+(`AsyncStorageDriver`) for `storagePlugin`, `mongoSessionStore` for durable sessions, and
+`mongoPlugin` + `useMongo` to reach your database from components. It relies only on the structural
+shape of the official driver's `Collection`, `Db` and `MongoClient`, so `mongodb` stays an optional
+peer dependency.
+
+```npm
+npm i @teactjs/mongodb @teactjs/storage mongodb
+```
+
+Peers: `mongodb` (`^5.0.0 || ^6.0.0 || ^7.0.0`, optional), `@teactjs/core`, `@teactjs/storage`,
+`@teactjs/plugin-sdk`, `react`. With the CLI: `teact add mongodb` (alias `mongo`; reads
+`MONGO_URL`).
+
+**When to use**
+
+- Your app data already lives in MongoDB (Atlas or self-hosted).
+- You want values stored as native BSON and queryable with ordinary Mongo tools.
+- Long-running servers or Node serverless functions (not Cloudflare Workers — the driver needs TCP).
+
+## Quick example
+
+<Tabs items={['MongoClient', 'Db', 'Collection']}>
+<Tab value="MongoClient">
+
+```ts title="src/db.ts"
+import { MongoClient } from "mongodb";
+import { storagePlugin } from "@teactjs/storage";
+import { MongoDriver, mongoPlugin, mongoSessionStore } from "@teactjs/mongodb";
+
+const mongo = new MongoClient(process.env.MONGO_URL!);
+export const mongoDriver = new MongoDriver({ client: mongo, dbName: "bot" });
+await mongoDriver.ensureIndexes(); // TTL index so Mongo deletes expired entries
+
+export const plugins = [
+  mongoPlugin({ client: mongo, dbName: "bot", closeOnStop: true }),
+  storagePlugin({ driver: mongoDriver }),
+];
+export const sessionStore = mongoSessionStore({ client: mongo, dbName: "bot", collectionName: "sessions" });
+```
+
+</Tab>
+<Tab value="Db">
+
+```ts title="src/db.ts"
+import { MongoClient } from "mongodb";
+import { storagePlugin } from "@teactjs/storage";
+import { MongoDriver, mongoPlugin, mongoSessionStore } from "@teactjs/mongodb";
+
+const client = await new MongoClient(process.env.MONGO_URL!).connect();
+const db = client.db("mybot");
+
+export const mongoDriver = new MongoDriver({ db }); // collection "teact_storage"
+export const plugins = [mongoPlugin({ db }), storagePlugin({ driver: mongoDriver })];
+export const sessionStore = mongoSessionStore({ db, collectionName: "sessions", ttl: 30 * 24 * 3600_000 });
+```
+
+</Tab>
+<Tab value="Collection">
+
+```ts title="src/db.ts"
+import { MongoClient } from "mongodb";
+import { storagePlugin } from "@teactjs/storage";
+import { MongoDriver, type MongoStorageDoc } from "@teactjs/mongodb";
+
+const client = await new MongoClient(process.env.MONGO_URL!).connect();
+const collection = client.db("mybot").collection<MongoStorageDoc>("bot_state");
+
+export const mongoDriver = new MongoDriver({ collection });
+export const plugins = [storagePlugin({ driver: mongoDriver })];
+```
+
+</Tab>
+</Tabs>
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { plugins, sessionStore } from "./db";
+import { router } from "./router";
+
+const bot = createBot({ router, adapter: new TelegramAdapter(), plugins, session: { store: sessionStore } });
+if (import.meta.main) bot.start();
+```
+
+## Exports
+
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `MongoDriver` | class | `new MongoDriver(opts: MongoDriverOptions)` | `AsyncStorageDriver`, one document per key. |
+| `mongoSessionStore` | function | `(opts: MongoSessionStoreOptions) => SessionStore` | Durable sessions. |
+| `mongoPlugin` | function | `(opts: MongoPluginOptions) => TeactPlugin` | Registers the `Db` as `'mongo'` and the client as `'mongoClient'` (plugin name `teact-mongodb`). |
+| `useMongo` | hook | `<D = MongoDbLike>() => D` | The registered database. |
+| `MONGO_SERVICE` | const | `'mongo'` | Service key of the `Db`. |
+| `MONGO_CLIENT_SERVICE` | const | `'mongoClient'` | Service key of the `MongoClient`, when one was given. |
+| `DEFAULT_COLLECTION` | const | `'teact_storage'` | Default collection name. |
+| `escapeRegex` | function | `(s: string) => string` | Escape RegExp metacharacters (used for prefix lookups). |
+
+Types: `MongoDriverOptions`, `MongoSessionStoreOptions`, `MongoPluginOptions`, `MongoStorageDoc`
+(`{ _id: string; value: unknown; expiresAt?: Date | null }`), `MongoCollectionLike`,
+`MongoCursorLike`, `MongoDbLike`, `MongoClientLike`.
+
+## MongoDriver
+
+Pass exactly one of `collection`, `db` or `client`; otherwise the constructor throws
+`MongoDriver needs a \`collection\`, \`db\` or \`client\``.
+
+<TypeTable
+  type={{
+    collection: { type: 'MongoCollectionLike', description: 'The collection to store entries in.' },
+    db: { type: 'MongoDbLike', description: 'A database; uses db.collection(collectionName).' },
+    client: { type: 'MongoClientLike', description: 'A MongoClient; uses client.db(dbName).collection(collectionName).' },
+    dbName: { type: 'string', description: 'Database name with client.', default: 'the one in the connection string' },
+    collectionName: { type: 'string', description: 'Collection name with db or client.', default: "'teact_storage'" },
+    closeClient: { type: 'boolean', description: 'Close client in driver.close() (called by storagePlugin on stop). Only applies with client.', default: 'false' },
+  }}
+/>
+
+### Methods
+
+| Method | Description |
+| ------ | ----------- |
+| `get<T>(key)` | `findOne({ _id })`; expired documents read as missing. |
+| `set(key, value, { ttl? })` | `updateOne` upsert. With `ttl` sets `expiresAt`, without it `$unset`s it. `undefined` deletes. |
+| `incr(key, by = 1, { ttl? })` | Atomic, lock-free (`$inc`). Defined when the collection has `findOneAndUpdate`. |
+| `delete(key)`, `has(key)` | Remove / check a live key. |
+| `keys(prefix = '')`, `entries(prefix)` | Live keys / pairs in one query. |
+| `clear(prefix = '')` | `deleteMany` under `prefix`, or the whole collection. |
+| `ensureIndexes()` | Create the TTL index `teact_expiresAt_ttl` on `{ expiresAt: 1 }` with `expireAfterSeconds: 0`. Idempotent. |
+| `close()` | Close the client when `closeClient: true`. |
+
+The `collection` property is the collection entries live in.
+
+### How data is stored
+
+- **Documents** are `{ _id: key, value, expiresAt? }`. `value` is native BSON, so you can query
+  it with ordinary Mongo tools.
+- **BSON, not JSON.** A stored `Date` comes back as a `Date` (the other drivers JSON-encode it and
+  return an ISO string). `undefined` object members are dropped (`ignoreUndefined`), as with JSON.
+- **Prefix queries** use an anchored, escaped `^prefix` regex on `_id`, which can use the `_id`
+  index.
+- **Expiry.** Expired documents are filtered out on every read immediately. Mongo deletes them only
+  if the TTL index exists (`ensureIndexes()`), and its TTL monitor runs about once a minute.
+- **`incr`.** Step 1 `$inc`s a live document (keeping its expiry). Otherwise step 2 replaces an
+  expired document, or upserts a new one, with `value: by` and the `ttl`. A concurrent insert
+  (duplicate `_id`, code `11000`) is retried, up to 10 times, so each increment is applied exactly
+  once. Rejects when the stored value is not a number. Works with v5 (`{ value, ok }`) and v6+
+  (document) `findOneAndUpdate` results.
+
+<Callout type="info" title="Create the TTL index once">
+Without `ensureIndexes()`, expired entries are hidden but never removed. Call it once at startup or
+in a migration — it is idempotent.
+</Callout>
+
+## mongoSessionStore
+
+<TypeTable
+  type={{
+    'collection | db | client': { type: 'MongoDriverOptions', description: 'Same connection options as MongoDriver (plus dbName, collectionName, closeClient).', required: true },
+    prefix: { type: 'string', description: 'Key prefix for session documents (_id).', default: "'session:'" },
+    ttl: { type: 'number', description: 'Session lifetime in ms, stored as expiresAt and refreshed on every write.' },
+  }}
+/>
+
+```ts
+mongoSessionStore({ db: client.db("mybot"), collectionName: "sessions", ttl: 7 * 24 * 3600_000 });
+```
+
+With `ttl`, call `new MongoDriver({ db, collectionName: "sessions" }).ensureIndexes()` once so Mongo
+deletes expired sessions.
+
+## mongoPlugin and useMongo
+
+<TypeTable
+  type={{
+    client: { type: 'MongoClientLike', description: 'A MongoClient. Also registered as the "mongoClient" service.' },
+    dbName: { type: 'string', description: 'Database to expose with client.', default: 'the one in the connection string' },
+    db: { type: 'MongoDbLike', description: 'A Db to expose directly (takes precedence over client).' },
+    closeOnStop: { type: 'boolean', description: 'Close client when the bot stops. No effect without client.', default: 'false' },
+  }}
+/>
+
+Without `client` or `db` it throws `mongoPlugin needs a \`client\` or a \`db\``.
+
+```tsx title="src/screens/Profile.tsx"
+import { useQuery, useBot } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { useMongo } from "@teactjs/mongodb";
+import type { Db } from "mongodb";
+
+export function Profile() {
+  const db = useMongo<Db>();
+  const { userId } = useBot();
+  const { data } = useQuery({
+    key: `user:${userId}`,
+    fn: () => db.collection<{ _id: string; name: string; level: number }>("users").findOne({ _id: userId }),
+  });
+  return <Message text={data ? `${data.name}, level ${data.level}` : "No profile yet."} />;
+}
+```
+
+<TelegramPreview bot="Guild Bot" user="/profile" text={"Ana, level 12"} />
+
+## Serverless
+
+- The official driver needs TCP; it works on Node serverless functions but not on Cloudflare
+  Workers. Use `@teactjs/cloudflare` or Upstash/Neon there.
+- Create the `MongoClient` once at module scope so warm invocations reuse the connection.
+- Writes are awaited before the update finishes, so nothing is lost when the function freezes.
+
+## Related
+
+<Cards>
+  <Card title="Databases guide" href="/docs/guides/databases" description="Choosing and wiring a backend." />
+  <Card title="@teactjs/storage" href="/docs/packages/storage" description="useStorage and the driver interface." />
+  <Card title="@teactjs/plugins" href="/docs/packages/plugins" description="rateLimit and analytics on top of incr." />
+</Cards>

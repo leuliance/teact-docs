@@ -1,18 +1,13 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { appName, docsRoute, gitConfig } from './shared';
+import { Wordmark } from '@/components/landing/wordmark';
+import { gitConfig } from './shared';
 
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: appName,
+      title: <Wordmark />,
       url: '/',
     },
-    links: [
-      {
-        text: 'Documentation',
-        url: docsRoute,
-      },
-    ],
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
     themeSwitch: {
       enabled: true,

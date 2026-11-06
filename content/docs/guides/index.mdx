@@ -1,28 +1,58 @@
 ---
 title: Guides overview
-description: Feature guides for routing, commands, conversations, hooks, UI, and Telegram-specific behavior.
+description: A map of every Teact guide — building screens, managing state and data, and running bots in production.
 ---
 
+The guides explain how each part of Teact works, with complete examples, references and recipes.
+Teact splits into three packages you'll see throughout: **`@teactjs/core`** (engine, router,
+hooks), **`@teactjs/ui`** (components) and **`@teactjs/telegram`** (the Telegram adapter,
+imperative conversations and streaming plugin).
 
-Teact is React for Telegram bots. Everything except the UI components lives in
-**`@teactjs/core`**; components come from **`@teactjs/ui`**; the grammY-driven
-Telegram runtime (adapter, conversations, streaming) comes from
-**`@teactjs/telegram`**.
+New to Teact? Start with the [Quick start](/docs/getting-started/quick-start), then read Router,
+Components and Hooks in that order.
 
-<Callout type="info">
-  The old `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer` packages
-  were folded into `@teactjs/core` in 0.2.0-alpha. Import engine + hooks from
-  `@teactjs/core` and components from `@teactjs/ui`.
+## Build screens
+
+| Guide | What it covers |
+| --- | --- |
+| [Router](/docs/guides/router) | Paths to screens, route buttons, `beforeLoad` guards, typed params, navigation modes, deep links and `notFound`. |
+| [Commands](/docs/guides/commands) | `/start` and friends: route and handler commands, the command menu, middleware and `useCommand`. |
+| [Components](/docs/guides/components) | All 36 `@teactjs/ui` components with props, plus edit-or-send rules, limits and HTML escaping. |
+| [Hooks](/docs/guides/hooks) | Reference for every hook in `@teactjs/core`, with signatures and examples. |
+| [Conversations](/docs/guides/conversations) | Step-by-step questions with `useConversation`, `<Conversation>` and imperative `defineConversation`. |
+| [Forms](/docs/guides/forms) | Field collection with `useForm`: prompts, choices, validation and editing. |
+| [Events](/docs/guides/events) | Photos, contacts, locations and service messages with `useEventData` and `useOn`. |
+| [Streaming](/docs/guides/streaming) | Live-updating messages for LLM output with `useStream`. |
+| [Payments](/docs/guides/payments) | Invoices in a provider currency or Telegram Stars with `useInvoice`. |
+
+## State & data
+
+| Guide | What it covers |
+| --- | --- |
+| [Storage](/docs/guides/storage) | Persistent per-user and global key-value data, and session stores. |
+| [Databases](/docs/guides/databases) | Redis, Postgres, SQLite, MongoDB and Cloudflare drivers. |
+| [Auth](/docs/guides/auth) | Role checks with `authPlugin` and token sessions with `useAuthSession`. |
+| [i18n](/docs/guides/i18n) | Translations, locale detection and a language switcher. |
+
+## Production
+
+| Guide | What it covers |
+| --- | --- |
+| [Middleware & plugins](/docs/guides/middleware-plugins) | The update pipeline, `halt`, and writing or installing plugins. |
+| [Telegram adapter](/docs/guides/telegram-adapter) | Adapter options, polling vs webhooks, and what the adapter guarantees. |
+| [Deployment](/docs/guides/deployment) | Long-running servers and serverless/edge with `bot.fetch()`. |
+| [Testing](/docs/guides/testing) | Driving bots in tests with the mock adapter. |
+
+<Callout type="info" title="Long-running vs serverless">
+  Several features (streaming, in-memory conversations and forms, `onClick` handlers, work after an
+  `await`) rely on the bot process staying alive between updates. Each guide flags this where it
+  matters; the [Deployment](/docs/guides/deployment#edge-checklist) guide has the full checklist.
 </Callout>
 
-Use the sidebar to jump to a topic. Suggested order for new bots:
+## Related
 
-1. [Router](/docs/guides/router) — screens and navigation
-2. [Commands](/docs/guides/commands) — `/start`, menu, deep links
-3. [Components](/docs/guides/components) — messages, keyboards, media
-4. [Hooks](/docs/guides/hooks) — context, session, navigate, commands
-
-Then add [Conversations](/docs/guides/conversations),
-[Forms](/docs/guides/forms), [Streaming](/docs/guides/streaming),
-[Events](/docs/guides/events), [Storage](/docs/guides/storage), or
-[Auth](/docs/guides/auth) as needed.
+<Cards>
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="Build and run a first bot." />
+  <Card title="Packages" href="/docs/packages" description="Reference for every @teactjs package." />
+  <Card title="Troubleshooting" href="/docs/getting-started/troubleshooting" description="Common problems and fixes." />
+</Cards>

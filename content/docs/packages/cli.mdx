@@ -1,43 +1,430 @@
 ---
 title: "@teactjs/cli"
-description: The teact CLI — dev, build, start, deploy, webhook, generate, doctor, routes, and typecheck.
+description: API reference for the teact CLI — create, dev, build, start, add (with every integration and client variant), typecheck, generate, doctor, info, routes, deploy and webhook, with all flags and sample output.
 ---
 
+`@teactjs/cli` provides the `teact` command, which takes a project from scaffolding through
+development, building, deployment and diagnostics. `create-teact` installs it as a dev dependency,
+so most projects already have it. Every command module is loaded lazily, so `teact --version`,
+`teact --help` and light commands never pay for Vite, esbuild or the interactive prompts: `--version`
+dropped from ~230 ms to ~7 ms, light commands from ~230 to ~35 ms, and `dev`'s first output from ~350
+to ~45 ms.
 
-The `teact` command drives a project through development, building, deployment, and diagnostics.
-It is installed as a dev dependency by `create-teact`, so most projects already have it.
-
-```bash
-bun add -D @teactjs/cli
+```npm
+npm i -D @teactjs/cli
 ```
 
-## Commands
+The binary is `teact` (`#!/usr/bin/env bun`), so the CLI needs [Bun](https://bun.sh). Dependencies
+(`commander`, `@clack/prompts`, `esbuild`, `vite`, `vite-node`) install automatically.
+
+**When to use**
+
+- Day to day: `teact dev`, `teact build`, `teact start`.
+- Adding integrations without hand-editing: `teact add redis --client ioredis`.
+- Diagnosing a bot that doesn't answer: `teact doctor`.
+- Deploying to Cloudflare Workers: `teact deploy` + `teact webhook set`.
+
+## Commands at a glance
 
 | Command | Purpose |
 | ------- | ------- |
-| `teact dev` | Development server with hot reload (`-e, --entry <file>`) |
-| `teact build` | Build for production to `dist/` (`-e`, `--no-minify`, `--no-sourcemap`) |
-| `teact start` | Run the production build (`dist/index.js`) — run `teact build` first |
-| `teact deploy [target]` | Scaffold & deploy to a serverless platform (default `cloudflare`; `--run` to execute the platform command) |
-| `teact webhook <action> [url]` | Manage the Telegram webhook: `set <url>` / `delete` / `info` (`--secret`, `--drop`) |
-| `teact generate <type> <name>` | Generate a `component`, `hook`, or `plugin` |
-| `teact doctor` | Check your environment and project setup |
-| `teact routes` | List registered routes in the project |
-| `teact typecheck` | Type-check with `tsc --noEmit` |
+| [`teact create <name>`](#teact-create) | Scaffold a project (`-t`, `-f`, `--db`, `--pm`, `--no-install`) |
+| [`teact dev`](#teact-dev) | Run the bot and reload on change (`-e`, `--hot`, `--vite`, `--clear`) |
+| [`teact build`](#teact-build) | Bundle to `dist/index.js` (`-e`, `--target`, `--standalone`, `--vite`, `--no-minify`, `--no-sourcemap`) |
+| [`teact start`](#teact-start) | Run the production build |
+| [`teact add [plugins...]`](#teact-add) | Install and wire integrations (`--client`, `--dry-run`, `--no-install`, `--no-wire`) |
+| [`teact typecheck`](#teact-typecheck) | `tsc --noEmit` |
+| [`teact generate <type> <name>`](#teact-generate) | Generate a component, hook or plugin (alias `g`) |
+| [`teact doctor`](#teact-doctor) | Check environment, project, token and dependencies (`--offline`) |
+| [`teact info`](#teact-info) | Print project and environment info |
+| [`teact routes`](#teact-routes) | List routes declared with `createRouter()` (`--json`) |
+| [`teact deploy [target]`](#teact-deploy) | Scaffold and deploy to Cloudflare Workers (`--run`) |
+| [`teact webhook <action> [url]`](#teact-webhook) | `set <url>`, `delete` or `info` (`--secret`, `--drop`) |
 
-<Callout type="info">
-`teact create <name>` also exists for scaffolding, but new projects usually start with
-[`bun create teact`](/docs/packages/create-teact).
-</Callout>
+Global flags: `-v, --version` and `-h, --help` (also `teact <command> --help`, which prints the
+command's examples). A mistyped command prints a suggestion.
 
-## Typical workflow
+Most commands need a project: the CLI walks up from the current directory to the first folder with a
+`teact.config.ts`/`.js`, or a `package.json` that depends on `@teactjs/core` or `@teactjs/ui`. Otherwise they fail with
+`No Teact project found.` and the hint `teact create my-bot`.
+
+## teact create
 
 ```bash
-teact dev              # develop with hot reload
-teact typecheck        # verify types
-teact build            # produce dist/
-teact webhook set https://example.com/api/bot --secret $SECRET
-teact deploy cloudflare --run
+teact create <name> [options]
 ```
 
-See the [Deployment guide](/docs/guides/deployment) for platform-specific setup.
+| Flag | Description |
+| ---- | ----------- |
+| `-t, --template <template>` | `starter` (default; alias `router`), `showcase` (alias `full`), `counter`, `empty`. |
+| `-f, --features <features>` | Comma-separated: `storage`, `conversations`, `streaming`, `auth`, `payments`. `i18n` is always included. |
+| `--db <driver>` | Storage backend when `storage` is on: `memory`, `file`, `sqlite`, `redis`, `postgres`. Implies `storage`. |
+| `--pm <manager>` | `bun` (default), `npm`, `pnpm`. |
+| `--no-install` | Skip dependency installation. |
+
+In a terminal without `-t`, it asks interactively (template, features, storage backend, package
+manager). With `-t`, or when stdin is not a TTY, it uses the flags: the default template is
+`starter`, and the default features are none (`showcase`: all five). An unknown `--db` or an existing
+directory exits with an error.
+
+```bash
+teact create my-bot
+teact create my-bot -t showcase --pm bun
+teact create my-bot -t starter -f storage,auth --db sqlite --no-install
+```
+
+It writes `package.json` (scripts `dev: teact dev`, `build: teact build`,
+`start: bun run dist/index.js`), `tsconfig.json`, `.env` (`TELEGRAM_BOT_TOKEN=`, plus
+`PAYMENT_PROVIDER_TOKEN=`, `REDIS_URL=…` or `DATABASE_URL=…` as needed), `.gitignore` and the
+template's `src/` files, then installs and prints the next steps:
+
+```text
+cd my-bot
+# Add your TELEGRAM_BOT_TOKEN (from @BotFather) to .env
+bun dev
+```
+
+See [create-teact](/docs/packages/create-teact) for templates, features and storage backends.
+
+## teact dev
+
+```bash
+teact dev [options]
+```
+
+| Flag | Description |
+| ---- | ----------- |
+| `-e, --entry <file>` | Entry file. Default: the first of `src/index.tsx`, `src/index.ts`, `src/bot.tsx`, `src/bot.ts`, `index.tsx`, `index.ts`. |
+| `--hot` | Reload in-process with `bun --hot` instead of restarting with `bun --watch`. |
+| `--vite` | Use the vite-node pipeline (automatic when a `vite.config.*` exists, or when not running under Bun). |
+| `--clear` | Clear the screen on every reload. |
+
+```text
+Starting Teact dev server
+
+[teact] Entry: src/index.tsx
+[teact] Mode:  bun --watch (restart on change)
+```
+
+- **`bun --watch` (default)** restarts the process on every change, so timers, sockets, DB pools,
+  signal listeners and the previous grammY poller are torn down; the bot's SIGTERM handler runs
+  first, so polling stops gracefully.
+- **`bun --hot`** re-evaluates the module graph but keeps `globalThis`. Teact stops the previous bot
+  on `bot.start()`, but anything else a module started (intervals, connections) leaks across reloads.
+- Bun loads `.env`, `.env.development` and `.env.local` from the project root; `NODE_ENV` defaults to
+  `development`.
+
+```bash
+teact dev
+teact dev --hot --clear
+teact dev --vite -e src/bot.tsx
+```
+
+## teact build
+
+```bash
+teact build [options]
+```
+
+| Flag | Description |
+| ---- | ----------- |
+| `-e, --entry <file>` | Entry file (same default as `dev`). |
+| `--target <runtime>` | `bun` (default) or `node`. |
+| `--standalone` | Bundle dependencies too; grammY and DB clients stay external. |
+| `--vite` | Build with Vite (automatic when a `vite.config.*` exists). `--target`/`--standalone` are ignored there. |
+| `--no-minify` | Disable minification. |
+| `--no-sourcemap` | Disable source maps (default: linked maps). |
+
+`Bun.build` bundles to `dist/index.js` (ESM, `process.env.NODE_ENV` defined as `"production"`,
+`dist/` cleared first). `@teactjs/*` is always bundled; Node/Bun built-ins are external; other
+packages stay external so React remains a single instance — unless `--standalone`. Always external,
+even with `--standalone`: grammY and its plugins, `pg`, `pg-native`, `postgres`,
+`@neondatabase/serverless`, `ioredis`, `redis`, `@upstash/redis`, `mongodb`, `better-sqlite3`. The
+`@/…` import alias resolves to `src/…`.
+
+Example output (sizes and times depend on your project):
+
+```text
+Building Teact project
+
+[teact] Entry:   src/index.tsx
+[teact] Bundler: Bun.build (target bun)
+[teact]   dist/index.js                48.3 kB
+[teact]   dist/index.js.map            131.0 kB
+✓ Built in 58ms → dist/
+[teact] Run it with: teact start
+```
+
+```bash
+teact build
+teact build --target node --no-minify
+teact build --vite
+```
+
+## teact start
+
+Runs `dist/index.js` with Bun (`NODE_ENV=production` unless set), forwarding SIGTERM to the bot.
+Without a build it exits with `No production build found at dist/index.js. → Run \`teact build\` first.`
+
+```bash
+teact build && teact start
+```
+
+## teact add
+
+```bash
+teact add [plugins...] [options]
+```
+
+| Flag | Description |
+| ---- | ----------- |
+| `--client <client>` | Client-library variant for integrations that have one (first listed is the default). Not allowed when adding several such integrations at once. |
+| `--dry-run` | Print what would happen without installing or editing files. |
+| `--no-install` | Skip package installation (prints the install command). |
+| `--no-wire` | Don't edit source files; print the snippet instead. |
+
+With no arguments it lists the registry. With names (or aliases) it:
+
+1. **Installs** the packages not yet in `package.json`, with the detected package manager (from the
+   lockfile or `packageManager`; default `bun`).
+2. **Wires** the code: merges imports, adds setup statements and appends to `plugins: [...]` of
+   `createBot({...})` — in the entry, else another `src/` file that calls `createBot(`, else
+   `defineConfig({...})` in `teact.config.ts`. A plugin already registered (possibly with other
+   options) is reported, not duplicated. If wiring isn't safe, it prints the snippet.
+3. **Adds env vars** the integration reads to `.env` (empty values to fill in).
+4. **Prints notes** (sessions, DDL, bindings).
+
+```bash
+teact add
+teact add redis --client ioredis
+teact add postgres --client neon --dry-run
+teact add rate-limit logger i18n
+```
+
+### Registry
+
+| Name | Aliases | `--client` variants (default first) | Installs | Env |
+| ---- | ------- | ----------------------------------- | -------- | --- |
+| `storage` | | | `@teactjs/storage` | |
+| `redis` | | `ioredis`, `redis` (node-redis v4+), `upstash` (`@upstash/redis`, HTTP), `bun` (built-in `RedisClient`) | `@teactjs/redis`, `@teactjs/storage` + client | `REDIS_URL` (upstash: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`) |
+| `postgres` | `pg`, `postgresql`, `neon`, `supabase` | `pg` (node-postgres `Pool`), `postgres` (postgres.js), `neon` (`@neondatabase/serverless`), `pglite` (`@electric-sql/pglite`) | `@teactjs/postgres`, `@teactjs/storage` + client | `DATABASE_URL` (not for pglite) |
+| `sqlite` | | `bun` (`bun:sqlite`), `better-sqlite3` | `@teactjs/sqlite`, `@teactjs/storage` (+ `better-sqlite3`) | |
+| `mongodb` | `mongo` | | `@teactjs/mongodb`, `@teactjs/storage`, `mongodb` | `MONGO_URL` |
+| `cloudflare` | `cf`, `kv`, `d1`, `workers` | `kv`, `d1` | `@teactjs/cloudflare`, `@teactjs/storage` | |
+| `i18n` | | | `@teactjs/i18n` | |
+| `plugins` | | | `@teactjs/plugins` | |
+| `rate-limit` | `ratelimit`, `throttle` | | `@teactjs/plugins` | |
+| `logger` | `logging` | | `@teactjs/plugins` | |
+| `maintenance` | | | `@teactjs/plugins` | |
+| `chat-filter` | `chatfilter` | | `@teactjs/plugins` | |
+| `ignore-old` | `ignoreold` | | `@teactjs/plugins` | |
+| `error-reporter` | `errors`, `sentry` | | `@teactjs/plugins` | |
+| `analytics` | | | `@teactjs/plugins` | |
+| `feature-flags` | `flags`, `featureflags` | | `@teactjs/plugins` | |
+| `broadcast` | `broadcasts`, `broadcaster` | | `@teactjs/plugins` | |
+
+Names are case-insensitive; a leading `@teactjs/` and underscores (`rate_limit`) are accepted. An
+unknown client fails with `Unknown --client "x" for redis. Available: ioredis, redis, upstash, bun`.
+
+### What gets wired
+
+| Name | Setup | Plugins appended |
+| ---- | ----- | ---------------- |
+| `storage` | | `storagePlugin({ driver: 'file', path: '.teact/storage.json' })` |
+| `redis` (ioredis) | `const redis = new Redis(process.env.REDIS_URL!);` `const redisDriver = new RedisDriver({ client: redis });` | `redisPlugin({ client: redis, closeOnStop: true })`, `storagePlugin({ driver: redisDriver })` |
+| `redis` (redis) | `const redis = createClient({ url: process.env.REDIS_URL });` `await redis.connect();` + driver | same |
+| `redis` (upstash) | `const redis = Redis.fromEnv();` + driver | same |
+| `redis` (bun) | `const redis = new RedisClient(process.env.REDIS_URL);` + driver | same |
+| `postgres` | `const db = new Pool(...)` / `postgres(...)` / `neon(...)` / `new PGlite('./data/pg')`, then `const pg = new PostgresDriver({ client: db, closeClient: true });` | `storagePlugin({ driver: pg })`, `postgresPlugin({ driver: pg })` |
+| `sqlite` | `const sqlite = new SqliteDriver({ path: './data/bot.db' });` | `storagePlugin({ driver: sqlite })`, `sqlitePlugin({ driver: sqlite })` |
+| `mongodb` | `const mongo = new MongoClient(process.env.MONGO_URL!);` `const mongoDriver = new MongoDriver({ client: mongo, dbName: 'bot' });` | `mongoPlugin({ client: mongo, dbName: 'bot', closeOnStop: true })`, `storagePlugin({ driver: mongoDriver })` |
+| `rate-limit` | | `rateLimit({ window: 2000, limit: 3, onLimited: '⏳ Slow down a bit!' })` |
+| `logger` | | `logger()` |
+| `maintenance` | | `maintenance({ enabled: process.env.MAINTENANCE === '1' })` |
+| `chat-filter` | | `chatFilter()` |
+| `ignore-old` | | `ignoreOld()` |
+| `error-reporter` | | `errorReporter({ report: (err, ctx, info) => console.error('[bot error]', info.source, err) })` |
+| `analytics` | | `analytics()` |
+| `feature-flags` | | `featureFlags({ flags: {} })` |
+
+<Callout type="info" title="Printed, not inserted">
+`cloudflare`, `i18n`, `plugins` and `broadcast` only install and print instructions.
+`cloudflare:workers` doesn't exist under `bun dev`, `i18nPlugin` needs your locale imports, and
+`createBroadcaster` is called where you send — not registered as a plugin.
+</Callout>
+
+```text title="teact add redis --client ioredis"
+teact add redis
+
+[teact] Running bun add @teactjs/redis @teactjs/storage ioredis
+✓ Installed @teactjs/redis, @teactjs/storage, ioredis
+✓ Updated src/index.tsx
+    + import Redis from 'ioredis';
+    + …
+✓ Added REDIS_URL to .env — fill in the value
+ℹ Durable sessions: createBot({ session: { store: createSessionStore(redisDriver) } }) — createSessionStore comes from @teactjs/storage.
+
+Next: teact dev
+```
+
+## teact typecheck
+
+Runs `bunx tsc --noEmit` in the project. Requires a `tsconfig.json`; prints `No type errors.` or
+`Type errors found.` and exits with tsc's code.
+
+## teact generate
+
+```bash
+teact generate <type> <name>    # alias: teact g
+```
+
+| Type (alias) | Creates | Content |
+| ------------ | ------- | ------- |
+| `component` (`c`) | `src/components/<Name>.tsx` | A `Message` with a Back button that navigates to `/` |
+| `hook` (`h`) | `src/hooks/use<Name>.ts` (`use` added if missing) | A `useState` wrapper |
+| `plugin` (`p`) | `src/plugins/<name>.ts` | `export function <name>Plugin(): TeactPlugin` with `onStart`/`onStop` logs |
+
+`name` must be a valid identifier; existing files are never overwritten.
+
+```bash
+teact g component ProfileCard
+teact g hook usePoints
+teact g plugin audit
+```
+
+## teact doctor
+
+```bash
+teact doctor [--offline]
+```
+
+Runs checks in four sections and exits with code 1 if any check errors:
+
+| Section | Checks |
+| ------- | ------ |
+| Environment | Running under Bun, version ≥ 1.1.0 |
+| Project | `package.json`, `tsconfig.json`, installed `node_modules`, an entry file, `teact.config.ts` (optional), local TypeScript, `.env`, `WEBHOOK_SECRET` when webhook mode or a `wrangler.*` file is detected |
+| Telegram | `TELEGRAM_BOT_TOKEN` set and well-formed; with network: `getMe` (token valid, `@username`), `getWebhookInfo` (warns when a webhook is set but you poll — `teact webhook delete`; shows pending updates and the last error). 3 s timeout. `--offline` skips these. |
+| Dependencies | `@teactjs/*` declared and installed at one version (else a `bun add …` fix to align them), a single React copy (multiple copies cause "Invalid hook call"), a client library for each database package, required `@teactjs/*` peers |
+
+Example output:
+
+```text
+Teact Doctor
+
+Environment
+  ✓ Bun 1.2.4
+
+Project
+  ✓ Project: /home/me/my-bot
+  ✓ package.json
+  ✓ tsconfig.json
+  ✓ Dependencies installed
+  ✓ Entry file (src/index.tsx)
+  ℹ teact.config.ts not found (optional)
+  ✓ TypeScript 5.7.2
+
+Telegram
+  ✓ Token valid — @my_bot (id 123456789)
+  ⚠ A webhook is set (https://my-bot.workers.dev) — polling (teact dev) will not receive updates
+      → Remove it for local dev: teact webhook delete
+
+Dependencies
+  ✓ @teactjs/* 1.0.0 (4 packages)
+  ✓ React 19.1.0 (single copy)
+
+1 warning(s) (412ms)
+```
+
+## teact info
+
+Prints CLI version, Bun version, Node API version and platform; inside a project also the root, entry,
+package manager, pipeline (`vite (vite.config found)` or `bun (dev: bun --watch, build: Bun.build)`),
+`.env` status, whether a bot token is configured, and installed `@teactjs/*` versions.
+
+## teact routes
+
+```bash
+teact routes [--json]
+```
+
+Statically scans `src/**/*.{ts,tsx,js,jsx}` (or the project root without `src/`, skipping tests,
+`node_modules` and `dist/`) for `createRouter()` routes — no code is executed.
+
+```text
+Route table
+
+  ROUTE            COMPONENT      COMMAND
+  /                MainMenu       /start — Open the menu
+  /pokemon/:id     PokemonCard    /pokemon — Look up a Pokémon  deep-link
+  /secret          SecretPage     guarded
+
+  3 routes · 2 commands · 1 guarded (src/index.tsx)
+```
+
+`--json` prints the same data as an array of objects (`path`, `file`, `line`, `component`,
+`command`, `description`, `guard`, `deepLink`).
+
+## teact deploy
+
+```bash
+teact deploy [target] [--run]
+```
+
+The only target is `cloudflare` (default). It:
+
+- warns if the entry doesn't `export const bot = createBot(...)` (the worker imports it);
+- creates `src/worker.ts` (a `fetch` handler calling `bot.fetch(request, { token, secretToken, env })`)
+  and `wrangler.jsonc` (`main: src/worker.ts`, `compatibility_flags: ["nodejs_compat"]`) unless they
+  exist;
+- adds `.dev.vars` to `.gitignore`;
+- prints the next steps; with `--run`, runs `bunx wrangler deploy`.
+
+```text
+Next steps:
+  1. bunx wrangler secret put TELEGRAM_BOT_TOKEN
+  2. bunx wrangler secret put WEBHOOK_SECRET        # any random string
+  3. bunx wrangler deploy                            # or: teact deploy --run
+  4. teact webhook set https://<your-worker>.workers.dev --secret <same WEBHOOK_SECRET>
+  5. bun -e "import { bot } from './src/index'; await bot.setCommands()"   # command menu, once
+```
+
+Other targets exit with `Supported: cloudflare` and a hint to export a fetch handler that calls
+`bot.fetch(request)`.
+
+## teact webhook
+
+```bash
+teact webhook set <url> [--secret <token>] [--drop]
+teact webhook delete [--drop]
+teact webhook info
+```
+
+| Flag | Description |
+| ---- | ----------- |
+| `--secret <token>` | Secret token for `set`. Defaults to `WEBHOOK_SECRET` from the environment, `.env.local` or `.env`. |
+| `--drop` | Drop pending updates (`drop_pending_updates`). |
+
+The token is read from `TELEGRAM_BOT_TOKEN` (environment, `.env.local`, `.env`). `info` prints the URL
+(`(none — polling)` when unset), the pending update count and the last error. `delete` switches the
+bot back to polling.
+
+```bash
+teact webhook info
+teact webhook set https://my-bot.workers.dev --secret $WEBHOOK_SECRET
+teact webhook delete --drop
+```
+
+<Callout type="warn" title="Polling and webhooks are exclusive">
+While a webhook is set, `teact dev` (long polling) receives nothing. Run `teact webhook delete` before
+developing locally against a bot that is deployed with a webhook; `teact doctor` warns about this.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="create-teact" href="/docs/packages/create-teact" description="Templates, features and storage backends." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Build, start, Workers and webhooks." />
+  <Card title="Troubleshooting" href="/docs/getting-started/troubleshooting" description="When the bot doesn't answer." />
+  <Card title="@teactjs/plugins" href="/docs/packages/plugins" description="What teact add rate-limit & co. install." />
+</Cards>
