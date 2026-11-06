@@ -1,0 +1,324 @@
+/* ───────────────────────────── Docs: the frame takes the world ───────────────
+   Masthead, rail, title opener, code, tables and callouts are set in the
+   manifest world; the reading column stays calm (68ch, real contrast). */
+
+/* Rail */
+#nd-sidebar {
+  background: var(--color-kraft-tint);
+  border-inline-end: 2px solid var(--color-ink);
+}
+
+#nd-sidebar [data-search-full],
+#nd-subnav [data-search] {
+  border-radius: 0;
+  border: 2px solid var(--color-ink);
+  background: var(--color-label);
+  color: var(--color-ink-soft);
+  box-shadow: var(--shadow-hard-sm);
+}
+
+#nd-sidebar [data-search-full] kbd {
+  border-radius: 0;
+  border-color: var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+/* Group headings (separators) */
+#nd-sidebar p {
+  font-stretch: 75%;
+  font-weight: 750;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  margin-top: 1.25rem;
+  padding-inline: 0.5rem;
+}
+
+#nd-sidebar p:first-child {
+  margin-top: 0;
+}
+
+/* Rail items */
+#nd-sidebar a[data-active],
+#nd-sidebar button[data-active] {
+  border-radius: 0;
+  color: var(--color-ink-soft);
+  border: 2px solid transparent;
+  padding-block: 0.375rem;
+}
+
+#nd-sidebar a[data-active]:hover,
+#nd-sidebar button[data-active]:hover {
+  background: color-mix(in srgb, var(--color-label) 70%, transparent);
+  color: var(--color-ink);
+}
+
+#nd-sidebar a[data-active='true'] {
+  background: var(--color-label);
+  color: var(--color-ink);
+  font-weight: 650;
+  border-color: var(--color-ink);
+  box-shadow: var(--shadow-hard-sm);
+}
+
+/* The left guide line of nested folders */
+#nd-sidebar [data-active='true']::before {
+  display: none;
+}
+
+/* Masthead on small screens */
+#nd-subnav {
+  background: var(--color-kraft);
+  border-bottom: 2px solid var(--color-ink);
+}
+
+/* Table of contents */
+#nd-toc a {
+  color: var(--color-ink-soft);
+}
+
+#nd-toc a[data-active='true'] {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+#nd-toc [role='none'],
+#nd-toc .bg-fd-primary {
+  background-color: var(--color-orange) !important;
+}
+
+/* ───────────────────────────── Reading column ─────────────────────────────── */
+
+#nd-page {
+  --fd-page-width: 1180px;
+}
+
+#nd-page .prose {
+  --tw-prose-body: var(--color-ink);
+  --tw-prose-headings: var(--color-ink);
+  --tw-prose-links: var(--color-ink);
+  font-size: 1rem;
+  line-height: 1.72;
+}
+
+#nd-page .prose > :where(p, ul, ol, blockquote) {
+  max-width: 68ch;
+}
+
+#nd-page .prose :where(h2) {
+  font-stretch: 108%;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  font-size: 1.625rem;
+  line-height: 1.15;
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 2px solid var(--color-ink);
+}
+
+#nd-page .prose :where(h3) {
+  font-stretch: 100%;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+  font-size: 1.1875rem;
+  margin-top: 2.25rem;
+}
+
+#nd-page .prose :where(h4) {
+  font-stretch: 80%;
+  font-weight: 750;
+  font-size: 0.8125rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#nd-page .prose :where(a):not(:where(.not-prose, .not-prose *)) {
+  text-decoration-line: underline;
+  text-decoration-thickness: 2px;
+  text-decoration-color: color-mix(in srgb, var(--color-orange) 70%, transparent);
+  text-underline-offset: 3px;
+  font-weight: 550;
+}
+
+#nd-page .prose :where(a):not(:where(.not-prose, .not-prose *)):hover {
+  text-decoration-color: var(--color-orange);
+}
+
+#nd-page .prose :where(strong) {
+  font-weight: 700;
+}
+
+/* Inline code: a small label */
+#nd-page .prose :where(:not(pre) > code) {
+  font-size: 0.8em;
+  padding: 0.1em 0.35em;
+  border-radius: 0;
+  border: 1px solid var(--color-rule);
+  background: var(--color-kraft-tint);
+  color: var(--color-ink);
+  font-weight: 500;
+}
+
+#nd-page .prose :where(:not(pre) > code)::before,
+#nd-page .prose :where(:not(pre) > code)::after {
+  content: none;
+}
+
+#nd-page .prose :where(ul > li)::marker {
+  color: var(--color-orange-ink);
+}
+
+#nd-page .prose :where(ol > li)::marker {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--color-ink-soft);
+}
+
+#nd-page .prose :where(hr) {
+  border-color: var(--color-ink);
+  border-top-width: 2px;
+}
+
+/* ───────────────────────────── Code: ruled manifests ──────────────────────── */
+
+#nd-page figure.shiki {
+  border-radius: 0;
+  border: 2px solid var(--color-ink);
+  box-shadow: var(--shadow-hard-sm);
+  background: var(--color-label);
+  margin-block: 1.5rem;
+}
+
+#nd-page figure.shiki > div:has(> figcaption) {
+  background: var(--color-kraft-tint);
+  border-bottom: 2px solid var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-ink-soft);
+  min-height: 2.5rem;
+}
+
+#nd-page figure.shiki pre {
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+#nd-page figure.shiki button[aria-label='Copy Text'] {
+  border-radius: 0;
+}
+
+/* Tabs (code groups) */
+#nd-page [role='tablist'] {
+  border-radius: 0;
+}
+
+#nd-page div:has(> [role='tablist']) {
+  border-radius: 0;
+}
+
+#nd-page [role='tab'][data-state='active'] {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+
+/* ───────────────────────────── Tables: packing lists ──────────────────────── */
+
+#nd-page .prose :where(table) {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 2px solid var(--color-ink);
+  box-shadow: var(--shadow-hard);
+  background: var(--color-label);
+  font-size: 0.9rem;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+#nd-page .prose :where(thead th) {
+  background: var(--color-kraft-tint);
+  border-bottom: 2px solid var(--color-ink);
+  font-stretch: 78%;
+  font-weight: 750;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  padding: 0.6rem 0.85rem;
+  text-align: start;
+}
+
+#nd-page .prose :where(tbody td) {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--color-rule);
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+
+#nd-page .prose :where(tbody tr:last-child td) {
+  border-bottom: 0;
+}
+
+#nd-page .prose :where(tbody td + td, thead th + th) {
+  border-inline-start: 1px solid var(--color-rule);
+}
+
+/* Wide tables scroll inside their frame */
+#nd-page .prose div:has(> table) {
+  overflow-x: auto;
+}
+
+/* ───────────────────────────── Cards & steps ──────────────────────────────── */
+
+#nd-page a[data-card],
+#nd-page div[data-card] {
+  border-radius: 0;
+  border: 2px solid var(--color-ink);
+  background: var(--color-label);
+  box-shadow: var(--shadow-hard-sm);
+  transition:
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#nd-page a[data-card]:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 0 var(--color-shadow);
+  background: var(--color-label);
+}
+
+#nd-page a[data-card] > div:first-child:has(svg) {
+  border-radius: 0;
+  border: 2px solid var(--color-ink);
+  background: var(--color-kraft-tint);
+  color: var(--color-ink);
+}
+
+#nd-page a[data-card] h3,
+#nd-page div[data-card] h3 {
+  font-weight: 750;
+  font-stretch: 95%;
+}
+
+/* fumadocs Steps */
+#nd-page .fd-steps {
+  border-inline-start: 2px solid var(--color-ink);
+}
+
+#nd-page .fd-step::before {
+  border-radius: 0 !important;
+  border: 2px solid var(--color-ink);
+  background: var(--color-orange) !important;
+  color: #17140f !important;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+/* Accordions */
+#nd-page [data-orientation] > h3 > button,
+#nd-page .not-prose [data-state] {
+  border-radius: 0;
+}

@@ -2,10 +2,197 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
+/* ───────────────────────────── Manifest world ─────────────────────────────
+   Kraft-card ground, white label stock, ink, one safety-orange accent.
+   Firm 2px ink borders and small hard offset shadows — subtle neobrutalism.
+   Telegram blue lives only inside rendered bot previews. */
+
+@theme {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-martian), ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --color-ink: #17140f;
+  --color-ink-soft: #4a4136;
+  --color-kraft: #cba574;
+  --color-kraft-deep: #b48c58;
+  --color-kraft-tint: #eee3cf;
+  --color-label: #fdfcf9;
+  --color-rule: #d9cdb7;
+  --color-orange: #ff5a1f;
+  --color-orange-ink: #b93a0c;
+  --color-tg: #2aabee;
+  --color-tg-ink: #1c7fc0;
+  --color-tg-chat: #cfdfe9;
+
+  --color-shadow: #17140f;
+  --shadow-hard: 3px 3px 0 0 var(--color-shadow);
+  --shadow-hard-sm: 2px 2px 0 0 var(--color-shadow);
+  --shadow-hard-lg: 5px 5px 0 0 var(--color-shadow);
+}
+
+/* Fumadocs tokens mapped onto the world (light). */
+@theme {
+  --color-fd-background: #fdfcf9;
+  --color-fd-foreground: #17140f;
+  --color-fd-muted: #f2ecdf;
+  --color-fd-muted-foreground: #5b5143;
+  --color-fd-popover: #fdfcf9;
+  --color-fd-popover-foreground: #17140f;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #17140f;
+  --color-fd-border: #d9cdb7;
+  --color-fd-primary: #17140f;
+  --color-fd-primary-foreground: #fdfcf9;
+  --color-fd-secondary: #f2ecdf;
+  --color-fd-secondary-foreground: #17140f;
+  --color-fd-accent: #eee3cf;
+  --color-fd-accent-foreground: #17140f;
+  --color-fd-ring: #ff5a1f;
+  --color-fd-overlay: rgb(23 20 15 / 0.35);
+  --color-fd-info: #1c7fc0;
+  --color-fd-warning: #b93a0c;
+  --color-fd-error: #b4231d;
+  --color-fd-success: #2f7a3c;
+  --color-fd-idea: #8a5a12;
+}
+
+.dark {
+  --color-ink: #f2ebde;
+  --color-ink-soft: #c9bda9;
+  --color-kraft: #2b2219;
+  --color-kraft-deep: #3a2e21;
+  --color-kraft-tint: #221c15;
+  --color-label: #1a1612;
+  --color-rule: #4a3f31;
+  --color-orange: #ff6b36;
+  --color-orange-ink: #ff8a5c;
+  --color-tg-ink: #6fc6f5;
+  --color-tg-chat: #10202b;
+
+  --color-shadow: #000000;
+
+  --color-fd-background: #1a1612;
+  --color-fd-foreground: #f2ebde;
+  --color-fd-muted: #241f19;
+  --color-fd-muted-foreground: #c2b6a2;
+  --color-fd-popover: #1f1a15;
+  --color-fd-popover-foreground: #f2ebde;
+  --color-fd-card: #211c16;
+  --color-fd-card-foreground: #f2ebde;
+  --color-fd-border: #4a3f31;
+  --color-fd-primary: #f2ebde;
+  --color-fd-primary-foreground: #1a1612;
+  --color-fd-secondary: #241f19;
+  --color-fd-secondary-foreground: #f2ebde;
+  --color-fd-accent: #2b241c;
+  --color-fd-accent-foreground: #f2ebde;
+  --color-fd-ring: #ff6b36;
+  --color-fd-info: #6fc6f5;
+  --color-fd-warning: #ff8a5c;
+  --color-fd-error: #ff7b72;
+  --color-fd-success: #7fcf8a;
+  --color-fd-idea: #e0b45c;
+}
+
+/* ───────────────────────────── Base & browser surfaces ───────────────────── */
+
 html {
   scrollbar-gutter: stable;
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 html:has(body[data-scroll-locked]) {
   scrollbar-gutter: auto;
 }
+
+::selection {
+  background: var(--color-orange);
+  color: #17140f;
+}
+
+:root {
+  accent-color: var(--color-orange);
+  caret-color: var(--color-orange);
+  scrollbar-color: var(--color-kraft-deep) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-orange);
+  outline-offset: 2px;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-feature-settings: 'zero' 1;
+  font-stretch: 87.5%;
+}
+
+/* ───────────────────────────── Shared world utilities ────────────────────── */
+
+@utility label-stock {
+  background: var(--color-label);
+  border: 2px solid var(--color-ink);
+  box-shadow: var(--shadow-hard);
+}
+
+@utility field-caps {
+  font-stretch: 75%;
+  font-weight: 700;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@utility display-wide {
+  font-stretch: 112%;
+  font-weight: 850;
+  letter-spacing: -0.035em;
+  line-height: 0.98;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A pressable label: hard shadow that collapses on press. */
+@utility pressable {
+  transition:
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  &:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 0 var(--color-shadow);
+  }
+  &:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 0 var(--color-shadow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes tg-edit {
+  from {
+    background-color: color-mix(in srgb, var(--color-tg) 22%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@import './docs-theme.css';
