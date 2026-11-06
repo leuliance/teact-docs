@@ -1,175 +1,314 @@
 ---
 title: "@teactjs/redis"
-description: Redis storage driver, durable session store and plugin — works with ioredis, node-redis, Bun's built-in client and Upstash (edge).
+description: API reference for the Redis storage driver, durable session store and plugin — ioredis (incl. Cluster), node-redis, Bun's built-in client and Upstash (edge).
 ---
 
-Redis storage for Teact bots: a `RedisDriver` for `storagePlugin`, a durable session store, and a
-small plugin that exposes your client to components. It supports the popular clients without making
-any of them a hard dependency:
+`@teactjs/redis` stores Teact state in Redis: a `RedisDriver` for `storagePlugin`, a durable
+`redisSessionStore`, and `redisPlugin` + `useRedis` to reach your client from components. It adapts
+four client libraries behind one small interface, none of them a hard dependency, and keeps
+counters exact across instances with an atomic `incr`.
 
-| Client | Runtime | Detection |
-| ------ | ------- | --------- |
-| [`ioredis`](https://github.com/redis/ioredis) | Node / Bun | automatic, or `fromIoredis(client)` |
-| [`redis`](https://github.com/redis/node-redis) (node-redis v4/v5) | Node / Bun | automatic, or `fromNodeRedis(client)` |
-| Bun's built-in `RedisClient` / `Bun.redis` | Bun | automatic, or `fromBunRedis(client)` |
-| [`@upstash/redis`](https://github.com/upstash/redis-js) (HTTP) | Cloudflare Workers, Vercel Edge, Deno, Node | automatic, or `fromUpstash(client)` |
-
-```bash
-bun add @teactjs/redis @teactjs/storage
-# plus ONE client (skip it on Bun if you use Bun's built-in client):
-bun add ioredis          # or: redis, @upstash/redis
+```npm
+npm i @teactjs/redis @teactjs/storage ioredis
 ```
+
+Install **one** client: `ioredis`, `redis` (node-redis v4/v5) or `@upstash/redis`. Skip it on Bun if
+you use Bun's built-in `RedisClient`. Peer dependencies: `@teactjs/core`, `@teactjs/storage`,
+`@teactjs/plugin-sdk`, `react`; the clients are optional peers (`ioredis ^5`, `redis ^4 || ^5`,
+`@upstash/redis ^1`).
 
 Or let the CLI install and wire it: `teact add redis --client ioredis` (`ioredis` | `redis` |
 `upstash` | `bun`).
 
+**When to use**
+
+- Several bot instances (or a restart-heavy deploy) need to share chat state and sessions.
+- You want exact rate limits and analytics across instances (`incr`).
+- On edge runtimes, with Upstash over HTTP.
+
+| Client | Runtime | Detection |
+| ------ | ------- | --------- |
+| [`ioredis`](https://github.com/redis/ioredis) (`Redis`, `Cluster`) | Node / Bun | automatic, or `fromIoredis(client)` |
+| [`redis`](https://github.com/redis/node-redis) (node-redis v4/v5) | Node / Bun | automatic, or `fromNodeRedis(client)` |
+| Bun's built-in `RedisClient` / `Bun.redis` | Bun | automatic, or `fromBunRedis(client)` |
+| [`@upstash/redis`](https://github.com/upstash/redis-js) (HTTP) | Workers, Vercel Edge, Deno, Node | automatic, or `fromUpstash(client)` |
+
+## Quick example
+
+<Tabs items={['ioredis', 'node-redis', 'Bun', 'Upstash']}>
+<Tab value="ioredis">
+
+```ts title="src/db.ts"
+import Redis from "ioredis";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver, redisPlugin, redisSessionStore } from "@teactjs/redis";
+
+export const redis = new Redis(process.env.REDIS_URL!);
+export const redisDriver = new RedisDriver({ client: redis, namespace: "mybot:" });
+
+export const plugins = [redisPlugin({ client: redis, closeOnStop: true }), storagePlugin({ driver: redisDriver })];
+export const sessionStore = redisSessionStore({ client: redis, namespace: "mybot:" });
+```
+
+</Tab>
+<Tab value="node-redis">
+
+```ts title="src/db.ts"
+import { createClient } from "redis";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver, redisPlugin, redisSessionStore } from "@teactjs/redis";
+
+export const redis = createClient({ url: process.env.REDIS_URL });
+await redis.connect(); // connect before the first update
+
+export const redisDriver = new RedisDriver({ client: redis, namespace: "mybot:" });
+export const plugins = [redisPlugin({ client: redis, closeOnStop: true }), storagePlugin({ driver: redisDriver })];
+export const sessionStore = redisSessionStore({ client: redis, namespace: "mybot:" });
+```
+
+</Tab>
+<Tab value="Bun">
+
+```ts title="src/db.ts"
+import { RedisClient } from "bun";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver, redisPlugin, redisSessionStore } from "@teactjs/redis";
+
+export const redis = new RedisClient(process.env.REDIS_URL); // or: import { redis } from "bun"
+
+export const redisDriver = new RedisDriver({ client: redis, namespace: "mybot:" });
+export const plugins = [redisPlugin({ client: redis, closeOnStop: true }), storagePlugin({ driver: redisDriver })];
+export const sessionStore = redisSessionStore({ client: redis, namespace: "mybot:" });
+```
+
+</Tab>
+<Tab value="Upstash">
+
+```ts title="src/db.ts"
+import { Redis } from "@upstash/redis";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver, redisSessionStore } from "@teactjs/redis";
+
+// Reads UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN. Create it once, at module scope.
+export const redis = Redis.fromEnv();
+
+export const redisDriver = new RedisDriver({ client: redis, namespace: "mybot:" });
+export const plugins = [storagePlugin({ driver: redisDriver })];
+export const sessionStore = redisSessionStore({ client: redis, namespace: "mybot:" });
+```
+
+On Cloudflare Workers, import from `@upstash/redis/cloudflare` and use `Redis.fromEnv(env)`.
+
+</Tab>
+</Tabs>
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { plugins, sessionStore } from "./db";
+import { router } from "./router";
+
+const bot = createBot({ router, adapter: new TelegramAdapter(), plugins, session: { store: sessionStore } });
+if (import.meta.main) bot.start();
+```
+
+Components keep using `useStorage` and `useSession` as usual.
+
 ## Exports
 
-| Export | Kind | Description |
-| ------ | ---- | ----------- |
-| `RedisDriver` | class | `AsyncStorageDriver` for `storagePlugin`. Options: `client`, `clientKind?`, `namespace?`, `closeClient?` (default `false`). |
-| `redisSessionStore` | function | `redisSessionStore({ client, namespace?, prefix?, ttl? })` → `SessionStore`. |
-| `redisPlugin` | plugin | `redisPlugin({ client, closeOnStop? })` — registers the client as the `'redis'` service (`closeOnStop` defaults to `false`). |
-| `useRedis` | hook | `useRedis<C>()` → the client registered by `redisPlugin`. |
-| `fromIoredis`, `fromNodeRedis`, `fromBunRedis`, `fromUpstash` | functions | Explicit client adapters when auto-detection guesses wrong. |
-| `toRedisCommands`, `detectRedisClient`, `markNormalized` | functions | Lower-level adapter helpers. |
-| `escapeGlob`, `REDIS_SERVICE` | utils | Glob escaping for `SCAN MATCH`; the service key (`'redis'`). |
-| `RedisCommands`, `RedisDriverOptions`, `RedisSessionStoreOptions`, `RedisPluginOptions`, `RedisClientKind` | types | Interfaces for custom clients and options. |
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `RedisDriver` | class | `new RedisDriver(opts: RedisDriverOptions)` | `AsyncStorageDriver` for `storagePlugin`. |
+| `redisSessionStore` | function | `(opts: RedisSessionStoreOptions) => SessionStore` | Durable sessions. |
+| `redisPlugin` | function | `<C>(opts: RedisPluginOptions<C>) => TeactPlugin` | Registers the client as the `'redis'` service (plugin name `teact-redis`). |
+| `useRedis` | hook | `<C = AnyRedisClient>() => C` | The client registered by `redisPlugin`. |
+| `REDIS_SERVICE` | const | `'redis'` | The service key. |
+| `fromIoredis` | function | `(client: IoredisLike) => RedisCommands` | Adapt ioredis `Redis` or `Cluster`. |
+| `fromNodeRedis` | function | `(client: NodeRedisLike) => RedisCommands` | Adapt node-redis v4+. |
+| `fromBunRedis` | function | `(client: BunRedisLike) => RedisCommands` | Adapt Bun's `RedisClient`. |
+| `fromUpstash` | function | `(client: UpstashLike, opts?: FromUpstashOptions) => RedisCommands` | Adapt `@upstash/redis`. |
+| `toRedisCommands` | function | `(client: AnyRedisClient, kind?: RedisClientKind) => RedisCommands` | Normalize any supported client (auto-detect or forced). |
+| `detectRedisClient` | function | `(client: unknown) => RedisClientKind \| undefined` | Guess the library of a raw client. |
+| `markNormalized` | function | `<T extends RedisCommands>(commands: T) => T` | Mark a hand-written `RedisCommands` to be used as is. |
+| `escapeGlob` | function | `(s: string) => string` | Escape `* ? [ ] \` for `SCAN MATCH`. |
 
-## Storage driver
+Types: `RedisDriverOptions`, `RedisSessionStoreOptions`, `RedisPluginOptions`, `RedisCommands`,
+`AnyRedisClient`, `RedisClientKind` (`'ioredis' | 'node-redis' | 'bun' | 'upstash'`),
+`IoredisLike`, `NodeRedisLike`, `BunRedisLike`, `UpstashLike`, `FromUpstashOptions`.
 
-```ts
-import { createBot } from "@teactjs/core";
-import { storagePlugin } from "@teactjs/storage";
-import { RedisDriver } from "@teactjs/redis";
-import Redis from "ioredis";
+## RedisDriver
 
-const driver = new RedisDriver({
-  client: new Redis(process.env.REDIS_URL!),
-  namespace: "mybot:", // optional: prefix every key so several bots can share one DB
-});
+<TypeTable
+  type={{
+    client: { type: 'AnyRedisClient', description: 'ioredis, node-redis v4+, Bun RedisClient, @upstash/redis, or a RedisCommands object. Raw clients are auto-detected.', required: true },
+    clientKind: { type: "'ioredis' | 'node-redis' | 'bun' | 'upstash'", description: 'Force an adapter instead of auto-detecting.' },
+    namespace: { type: 'string', description: 'Prefix prepended to every Redis key (e.g. "mybot:"). keys()/entries() never include it; clear() only touches keys under it.', default: "''" },
+    closeClient: { type: 'boolean', description: 'Close the client in driver.close() (called by storagePlugin on stop).', default: 'false' },
+  }}
+/>
 
-createBot({ plugins: [storagePlugin({ driver })] /* ... */ });
-```
-
-Components keep using `useStorage` as usual. Before each update the storage plugin loads the
-current chat's keys in one go (one `SCAN` pass plus one `MGET`), and every write is awaited before
-the update finishes. See [Databases](/docs/guides/databases) for how that works.
-
-### Each client
-
-```ts
-// node-redis v4+ (connect before the first update)
-import { createClient } from "redis";
-const client = await createClient({ url: process.env.REDIS_URL }).connect();
-new RedisDriver({ client });
-
-// Bun's built-in client
-import { RedisClient, redis } from "bun";
-new RedisDriver({ client: redis }); // uses REDIS_URL
-new RedisDriver({ client: new RedisClient("redis://localhost:6379") });
-
-// Upstash (HTTP, works on the edge)
-import { Redis } from "@upstash/redis";
-new RedisDriver({ client: Redis.fromEnv() });
-```
-
-If auto-detection guesses wrong (for example with a wrapped or proxied client), use the matching
-`from*` helper or pass `clientKind: 'ioredis' | 'node-redis' | 'bun' | 'upstash'`. Any other client
-works if you implement the small `RedisCommands` interface (`get`, `set(key, value, ttlMs?)`,
-`del(keys)`, `scan(pattern)`, plus optional `mget` and `close`) and mark it with `markNormalized()`.
+The driver exposes `commands` (the normalized `RedisCommands`) and implements `get`, `set`,
+`delete`, `has`, `keys`, `clear`, `entries`, `close` and — when the client adapter supports it —
+`incr`.
 
 ### How data is stored
 
-- **Values** are JSON strings, so any Redis tool can read them.
-- **TTL**: `driver.set(key, value, { ttl: ms })` becomes `SET key value PX ms`. A `ttl` of `0`, a
-  negative number or `Infinity` means "no expiry".
-- **Counters**: `driver.incr(key, by?, { ttl? })` is atomic (one Lua script per call, on every
-  client). The `ttl` only applies when the increment creates the key. `@teactjs/plugins` uses it for
-  exact rate limits and analytics across instances.
-- **Prefix queries** use `SCAN … MATCH <prefix>*` with glob characters escaped. The driver never
-  calls `KEYS`, so it never blocks the server.
-- **`clear()`** only deletes keys under the `namespace` and never runs `FLUSHDB`. Without a
-  namespace it deletes every key in the database.
-- **Upstash** JSON-parses values on read by default; the adapter accounts for that, so a stored
-  string `"42"` comes back as `"42"`, not `42`.
+- **Values** are JSON strings, readable by any Redis tool. Reads also tolerate plain non-JSON
+  strings written by other code. `set(key, undefined)` deletes the key.
+- **TTL**: `set(key, value, { ttl: ms })` becomes `SET key value PX ms`. `0`, negative, `NaN` or
+  `Infinity` mean no expiry.
+- **Counters**: `incr(key, by = 1, { ttl? })` runs one Lua script: `INCRBY` for integers,
+  `INCRBYFLOAT` for fractions, and `PEXPIRE` only when the key was just created. A non-finite `by`
+  throws. `@teactjs/plugins` uses it for exact rate limits and analytics across instances.
+- **Prefix queries** use `SCAN … MATCH <escaped prefix>*` with `COUNT 250`, never `KEYS`.
+  `entries()` is one SCAN pass plus one `MGET` (parallel `GET`s if the client has no `mget`).
+- **`clear(prefix?)`** deletes while scanning, in `DEL` batches of 500. It never runs `FLUSHDB`.
+
+<Callout type="warn" title="clear() without a namespace">
+Without a `namespace`, `driver.clear()` deletes every key in the database. Always set a `namespace`
+when the database is shared with other bots or apps.
+</Callout>
 
 ### ioredis Cluster
 
-An ioredis `Cluster` is detected automatically: prefix queries `SCAN` every master node and
-multi-key reads and deletes go key by key, so you never hit `CROSSSLOT` errors.
+An ioredis `Cluster` is detected automatically (`isCluster === true` and `nodes()`): prefix queries
+`SCAN` every master and multi-key reads and deletes go key by key, so you never hit `CROSSSLOT`.
 
 ```ts
 import { Cluster } from "ioredis";
+import { RedisDriver } from "@teactjs/redis";
 
 new RedisDriver({ client: new Cluster([{ host: "redis-1", port: 6379 }]), namespace: "mybot:" });
 ```
 
-Use the driver's `namespace` option rather than ioredis' `keyPrefix`: `keyPrefix` is not applied to
-`SCAN` patterns or results, so prefix queries would miss your keys.
+Use the driver's `namespace`, not ioredis' `keyPrefix`: `keyPrefix` is not applied to `SCAN`
+patterns or results, so prefix queries would miss your keys.
+
+### Upstash specifics
+
+Upstash JSON-parses values on read by default. `fromUpstash` re-encodes them so the driver sees
+exactly what it stored (a stored string `"42"` comes back as `"42"`, not `42`), and disambiguates a
+stored `null` with `EXISTS`. If you created the client with `automaticDeserialization: false` and
+detection fails, pass `fromUpstash(client, { automaticDeserialization: false })`.
 
 ### Closing
 
-The driver never closes a client you pass in. Set `closeClient: true` to have `driver.close()`
-(which `storagePlugin` calls when the bot stops) close it — useful when the driver owns its own
-client. Closing is idempotent across Teact, so a client shared with `redisPlugin` is only closed
-once.
+The driver never closes a client you pass in unless `closeClient: true`. Closing is idempotent
+across Teact — a client shared by a driver with `closeClient: true` and `redisPlugin({ closeOnStop: true })`
+is closed once. ioredis uses `quit()`, node-redis `close()` (v5) or `quit()` (v4), Bun `close()`;
+Upstash has nothing to close.
 
-## Sessions
+## redisSessionStore
+
+<TypeTable
+  type={{
+    client: { type: 'AnyRedisClient', description: 'Same as RedisDriver.', required: true },
+    clientKind: { type: 'RedisClientKind', description: 'Force an adapter.' },
+    namespace: { type: 'string', description: 'Key namespace.' },
+    closeClient: { type: 'boolean', description: 'Same as RedisDriver.', default: 'false' },
+    prefix: { type: 'string', description: 'Key prefix for sessions, after the namespace.', default: "'session:'" },
+    ttl: { type: 'number', description: 'Session lifetime in ms, refreshed on every write (SET … PX).' },
+  }}
+/>
 
 ```ts
-import { redisSessionStore } from "@teactjs/redis";
-
 createBot({
-  session: {
-    store: redisSessionStore({
-      client: redis,
-      namespace: "mybot:",
-      ttl: 30 * 24 * 3600_000, // optional: expire idle sessions after 30 days
-    }),
-  },
+  session: { store: redisSessionStore({ client: redis, namespace: "mybot:", ttl: 30 * 24 * 3600_000 }) },
 });
 ```
 
-This is equivalent to `createSessionStore(new RedisDriver({ client }), { prefix: "session:", ttl })`
-from [`@teactjs/storage`](/docs/packages/storage).
+Equivalent to `createSessionStore(new RedisDriver(opts), { prefix, ttl })` from
+[`@teactjs/storage`](/docs/packages/storage). A session for chat 42 lives at
+`mybot:session:telegram:42`.
 
-## Plugin: use the client in components
+## redisPlugin and useRedis
 
-```tsx
-import { redisPlugin, useRedis, RedisDriver } from "@teactjs/redis";
+<TypeTable
+  type={{
+    client: { type: 'C extends AnyRedisClient', description: 'Your client, exposed unchanged through useRedis() / useService("redis").', required: true },
+    closeOnStop: { type: 'boolean', description: 'Close the client when the bot stops.', default: 'false' },
+  }}
+/>
+
+```tsx title="src/screens/Leaderboard.tsx"
+import { useState, useEffect, useBot } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { useRedis } from "@teactjs/redis";
 import type Redis from "ioredis";
 
-const redis = new Redis(process.env.REDIS_URL!);
-
-createBot({
-  plugins: [
-    redisPlugin({ client: redis, closeOnStop: true }), // service 'redis', closed on stop
-    storagePlugin({ driver: new RedisDriver({ client: redis }) }),
-  ],
-});
-
-function Leaderboard() {
+export function Leaderboard() {
   const redis = useRedis<Redis>();
-  // use it in handlers or effects, e.g. redis.zincrby("scores", 1, userId)
+  const { userId } = useBot();
+  const [top, setTop] = useState<string[]>([]);
+
+  useEffect(() => {
+    redis.zrevrange("scores", 0, 4, "WITHSCORES").then(setTop);
+  }, []);
+
+  return (
+    <Message text={top.length ? `Top players:\n${top.join(" ")}` : "Loading…"}>
+      <InlineKeyboard>
+        <Button text="+1 point" onClick={() => redis.zincrby("scores", 1, userId)} />
+      </InlineKeyboard>
+    </Message>
+  );
 }
 ```
 
-`redisPlugin({ client, closeOnStop = false })` registers the client unchanged, so
-`useService("redis")` works too. It only closes the client when the bot stops if you pass
-`closeOnStop: true`.
+## Custom clients: RedisCommands
+
+`RedisDriver` only talks to this interface. Implement it for any other client (a proxy, a mock) and
+mark it with `markNormalized`:
+
+<TypeTable
+  type={{
+    'get(key)': { type: 'Promise<string | null>', description: 'Raw stored text, or null.', required: true },
+    'mget(keys)': { type: 'Promise<Array<string | null>>', description: 'Optional. Many keys in one round trip.' },
+    'set(key, value, ttlMs?)': { type: 'Promise<void>', description: 'Store; expire after ttlMs (SET … PX).', required: true },
+    'del(keys)': { type: 'Promise<void>', description: 'Delete at least one key.', required: true },
+    'scan(pattern)': { type: 'AsyncIterable<string[]>', description: 'SCAN … MATCH pattern, one batch per page (duplicates allowed).', required: true },
+    'incrby(key, by, ttlMs?)': { type: 'Promise<number>', description: 'Optional. Atomic increment; ttl only on creation. Without it the driver has no incr.' },
+    'close()': { type: 'Promise<void>', description: 'Optional. Close the connection.' },
+  }}
+/>
+
+```ts title="test/fake-redis.ts"
+import { markNormalized, RedisDriver, type RedisCommands } from "@teactjs/redis";
+
+const data = new Map<string, string>();
+const fake: RedisCommands = markNormalized({
+  get: async (k) => data.get(k) ?? null,
+  set: async (k, v) => void data.set(k, v),
+  del: async (keys) => keys.forEach((k) => data.delete(k)),
+  async *scan(pattern) {
+    const prefix = pattern.replace(/\*$/, "").replace(/\\(.)/g, "$1");
+    yield [...data.keys()].filter((k) => k.startsWith(prefix));
+  },
+});
+
+export const driver = new RedisDriver({ client: fake });
+```
+
+An unmarked object is also accepted when it has `get`/`set`/`del` and its `scan` is an
+`async function*`. Anything else that isn't recognized throws `Could not recognize the Redis client`
+— wrap it with the matching `from*` helper or pass `clientKind`.
+
+Detection rules (`detectRedisClient`): node-redis has a camel-cased `mGet`; Bun is an instance of
+`Bun.RedisClient` or has `send()` without `scanStream`; ioredis has `scanStream()` (or is a
+`Cluster`); Upstash has an HTTP `client.request()` and `exists()`.
 
 ## Serverless and edge
 
-- **Cloudflare Workers / Vercel Edge**: TCP clients don't work there; use `@upstash/redis` (HTTP).
-  Create the client once per isolate, at module scope.
+- TCP clients don't work on Cloudflare Workers or Vercel Edge; use `@upstash/redis`. Create the
+  client once per isolate, at module scope — not per request.
 - Writes are awaited before `bot.fetch()` resolves, so nothing is lost when the isolate freezes.
-- **Long-running servers** (ioredis, node-redis, Bun): create a single client and reuse it.
+- On long-running servers (ioredis, node-redis, Bun), create one client and reuse it.
 
-## Do / Don't
+## Related
 
-- **Do** set a `namespace` when several bots or apps share one Redis database.
-- **Do** use `@upstash/redis` on edge runtimes.
-- **Don't** use ioredis' `keyPrefix` option; use `namespace` instead.
-- **Don't** call `clear()` without a namespace on a shared database — it removes every key.
-- **Don't** create a new client per request on serverless.
+<Cards>
+  <Card title="Databases guide" href="/docs/guides/databases" description="Choosing and wiring a backend." />
+  <Card title="@teactjs/storage" href="/docs/packages/storage" description="useStorage and the driver interface." />
+  <Card title="@teactjs/plugins" href="/docs/packages/plugins" description="rateLimit and analytics on top of incr." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Serverless and multi-instance deploys." />
+</Cards>

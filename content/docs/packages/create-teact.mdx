@@ -1,62 +1,178 @@
 ---
 title: create-teact
-description: Scaffold a new Teact bot — bun create teact, templates, and feature toggles.
+description: Scaffold a new Teact bot with bun create teact — the interactive prompts, templates, features, storage backends and the files it generates.
 ---
 
-
-`create-teact` scaffolds a ready-to-run Teact project: `package.json`, `tsconfig.json`,
-`teact.config.ts`, `.env`, and a `src/` tree that varies by the **template** and **features** you
-pick.
+`create-teact` scaffolds a ready-to-run Teact project: `package.json`, `tsconfig.json`, `.env`,
+`.gitignore`, `teact.config.ts` (starter and showcase) and a `src/` tree that depends on the **template** and
+**features** you pick. It is interactive; for flags and non-interactive use (CI, scripts) run the
+same generator through [`teact create`](/docs/packages/cli#teact-create) — both share one set of
+templates.
 
 ```bash
 bun create teact my-bot
-# also: npm create teact / pnpm create teact
+# also: npm create teact my-bot / pnpm create teact my-bot
 ```
 
-Run it with no flags for the interactive picker, or pass flags to the underlying
-[`teact create`](/docs/packages/cli): `-t/--template`, `-f/--features`, `--db`, `--pm`,
-`--no-install`.
+The binary is a Bun script, so Bun must be installed.
+
+**When to use**
+
+- Starting a new bot.
+- Exploring Teact: the `showcase` template is the full demo from `examples/showcase-bot`.
+
+## The prompts
+
+<Steps>
+<Step>
+
+### Project name
+
+Taken from the first argument, or asked (lowercase letters, numbers, `-` and `_`). An existing
+directory is an error.
+
+</Step>
+<Step>
+
+### Template
+
+`Starter`, `Showcase`, `Counter` or `Empty` (see [Templates](#templates)).
+
+</Step>
+<Step>
+
+### Plugins and integrations
+
+Toggle `storage`, `conversations`, `streaming`, `auth`, `payments`. `showcase` pre-selects all five;
+the others start with none. `i18n` is always included and not shown.
+
+</Step>
+<Step>
+
+### Storage backend
+
+Only when `storage` is selected: `file` (default), `memory`, `sqlite`, `redis`, `postgres`.
+
+</Step>
+<Step>
+
+### Package manager and install
+
+`bun` (recommended), `npm` or `pnpm`, then whether to install dependencies now.
+
+</Step>
+</Steps>
+
+It finishes with the next steps:
+
+```text
+cd my-bot
+# Add your TELEGRAM_BOT_TOKEN (from @BotFather) to .env
+bun dev
+```
 
 ## Templates
 
-| Name | Aliases | Notes |
-| ---- | ------- | ----- |
-| `starter` | `router` | Main menu + About; features add routes |
-| `showcase` | `full` | Full demo (Pokedex, streaming, component showcase, guards, deep links) |
-| `counter` | — | Single-screen state demo |
-| `empty` | — | One `Message`, no router |
+| Name | Aliases (`teact create -t`) | What you get |
+| ---- | --------------------------- | ------------ |
+| `starter` | `router` | Main menu + About pages with a router; features add pages (Settings, StreamDemo, LanguagePage, StorePage). |
+| `showcase` | `full` | Full demo: Pokédex with nested routes and deep links, stream demo, component showcase, guarded secret routes with login, `src/commands.ts`, a `NotFoundPage`, example middleware. Adds `@tanstack/react-query`. |
+| `counter` | | A single-screen counter with `useState`. |
+| `empty` | | One `Message`, no router, a `start` command. |
 
 ## Features
 
-Selected in the picker (comma-separated with `-f`):
-
 | Feature | Adds |
 | ------- | ---- |
-| `storage` | `storagePlugin` + persistent state via `useStorage` |
-| `conversations` | `conversationsPlugin` + multi-step flows |
-| `streaming` | `streamPlugin` + live text via `useStream` |
-| `auth` | `useAuthSession` + route guards |
-| `payments` | Telegram invoices via `useInvoice` |
+| `storage` | `@teactjs/storage`, `storagePlugin` with the chosen backend, a Settings page using `useStorage` |
+| `conversations` | `conversationsPlugin`; the full component tour in `showcase` |
+| `streaming` | `streamPlugin`, a StreamDemo page with `useStream` |
+| `auth` | `useAuthSession` + route guards; login and secret pages in `showcase` |
+| `payments` | A StorePage with `useInvoice`, `PAYMENT_PROVIDER_TOKEN=` in `.env` |
+| `i18n` (always) | `src/locales/en.json`, `src/locales/am.json` and a LanguagePage (starter and showcase) |
 
-## Storage backend
+Plugins are registered in `createBot({ plugins: [...] })` in `src/index.tsx`, not in
+`teact.config.ts`, so they also load on Cloudflare Workers where the config file is not read.
 
-When you pick `storage`, the scaffolder asks which backend to use (`--db` with `teact create`):
+## Storage backends
 
-| Backend | Wires |
-| ------- | ----- |
-| `file` (default) | `storagePlugin({ driver: "file", path: ".teact/storage.json" })` — zero setup |
-| `memory` | `storagePlugin({ driver: "memory" })` — lost on restart; good for tests |
-| `sqlite` | `SqliteDriver` from [`@teactjs/sqlite`](/docs/packages/sqlite) (`bun:sqlite`, no server) |
-| `redis` | `RedisDriver` from [`@teactjs/redis`](/docs/packages/redis) + ioredis; adds `REDIS_URL` to `.env` |
-| `postgres` | `PostgresDriver` from [`@teactjs/postgres`](/docs/packages/postgres) + postgres.js; adds `DATABASE_URL` |
+| Backend | Wires | Adds |
+| ------- | ----- | ---- |
+| `file` (default) | `storagePlugin({ driver: 'file', path: '.teact/storage.json' })` | — |
+| `memory` | `storagePlugin({ driver: 'memory' })` | — |
+| `sqlite` | `new SqliteDriver({ path: '.teact/bot.db' })` | `@teactjs/sqlite` |
+| `redis` | `new RedisDriver({ client: new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379'), closeClient: true })` | `@teactjs/redis`, `ioredis`, `REDIS_URL=redis://localhost:6379` |
+| `postgres` | `new PostgresDriver({ client: postgres(process.env.DATABASE_URL!), closeClient: true })` | `@teactjs/postgres`, `postgres`, `DATABASE_URL=postgres://localhost:5432/bot` |
 
-See the [Databases guide](/docs/guides/databases) for choosing one, and `teact add` to switch later.
+See the [Databases guide](/docs/guides/databases) for choosing one, and use `teact add` to switch
+later.
 
-<Callout type="info">
-`i18n` is a built-in feature — it is always merged into the scaffold and is not shown in the picker.
-The `showcase` template enables `storage`, `conversations`, `streaming`, `auth`, and `payments` by
-default.
+## Generated project
+
+<Files>
+  <Folder name="my-bot" defaultOpen>
+    <File name="package.json" />
+    <File name="tsconfig.json" />
+    <File name="teact.config.ts" />
+    <File name=".env" />
+    <File name=".gitignore" />
+    <Folder name="src" defaultOpen>
+      <File name="index.tsx" />
+      <Folder name="pages" defaultOpen>
+        <File name="MainMenu.tsx" />
+        <File name="About.tsx" />
+        <File name="Settings.tsx" />
+        <File name="LanguagePage.tsx" />
+      </Folder>
+      <Folder name="locales">
+        <File name="en.json" />
+        <File name="am.json" />
+      </Folder>
+    </Folder>
+  </Folder>
+</Files>
+
+- **`package.json`** — `type: "module"`; scripts `dev: teact dev`, `build: teact build`,
+  `start: bun run dist/index.js`; dependencies `@teactjs/core`, `@teactjs/ui`, `@teactjs/telegram`,
+  `@teactjs/cli`, `react ^19` (plus storage packages); dev dependencies `typescript`, `@types/bun`,
+  `@types/react`. `i18next`/`react-i18next` come through `@teactjs/core` and are not pinned.
+- **`tsconfig.json`** — ES2022, `moduleResolution: "bundler"`, `jsx: "react-jsx"`, `strict`,
+  `resolveJsonModule`; includes `src` and `teact.config.ts`.
+- **`.env`** — `TELEGRAM_BOT_TOKEN=` plus feature variables.
+- **`teact.config.ts`** — starter and showcase only; non-plugin settings (mode, webhook, session).
+- **`.gitignore`** — `node_modules/`, `dist/`, `.teact/`, `.env`, `.dev.vars`, `*.log`, `.DS_Store`.
+- **`src/index.tsx`** — `export const bot = createBot({...})` and `if (import.meta.main) bot.start();`,
+  so `teact deploy`'s worker can import the bot without starting polling.
+
+```tsx title="src/index.tsx (empty template)"
+import { createBot } from '@teactjs/core';
+import { Message } from '@teactjs/ui';
+import { TelegramAdapter } from '@teactjs/telegram';
+
+function App() {
+  return <Message text="Hello from Teact!" />;
+}
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  commands: { start: { description: 'Start the bot' } },
+});
+
+if (import.meta.main) bot.start();
+```
+
+<TelegramPreview bot="My Bot" user="/start" text={"Hello from Teact!"} />
+
+<Callout type="info" title="Non-interactive scaffolding">
+`create-teact` always prompts. In CI or scripts use `teact create my-bot -t starter -f storage --db sqlite --pm bun --no-install`,
+which skips the prompts when `-t` is given or stdin is not a terminal.
 </Callout>
 
-After scaffolding, add your `TELEGRAM_BOT_TOKEN` to `.env` and run `teact dev`. See
-[Getting started](/docs/getting-started) for the full walkthrough.
+## Related
+
+<Cards>
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="From scaffold to a running bot." />
+  <Card title="@teactjs/cli" href="/docs/packages/cli" description="teact create flags and every other command." />
+  <Card title="Installation" href="/docs/getting-started/installation" description="Requirements and manual setup." />
+</Cards>

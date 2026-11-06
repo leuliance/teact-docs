@@ -1,32 +1,145 @@
 ---
-title: Packages
-description: The npm packages that make up Teact — what to install and when to use each scope.
+title: Package overview
+description: Every npm package that makes up Teact — what each contains, how to install it, which ones your bot needs, and how versions and peer dependencies line up.
 ---
 
-Teact ships as a small set of scoped packages. `@teactjs/core` is the engine (reconciler, runtime,
-router, hooks, plugin host, and the re-exported React primitives); `@teactjs/ui` holds the visual
-components. Everything else is optional and layers on top.
+Teact ships as 15 packages: 14 under the `@teactjs/` scope plus the `create-teact` scaffolder.
+`@teactjs/core` is the engine (reconciler, runtime, router, every hook, the plugin host and the
+re-exported React primitives), `@teactjs/ui` holds the components, and `@teactjs/telegram` connects
+them to Telegram. Everything else is optional and layers on top. All packages are released together
+at one version (currently `0.2.0-alpha.1`).
 
-| Package | Install | Use when |
-| ------- | ------- | -------- |
-| [@teactjs/core](/docs/packages/core) | `bun add @teactjs/core` | The engine: `createBot`, router, all hooks, plugins, React re-exports |
-| [@teactjs/ui](/docs/packages/ui) | `bun add @teactjs/ui` | Components: `Message`, keyboards, media, formatting |
-| [@teactjs/telegram](/docs/packages/telegram) | `bun add @teactjs/telegram` | Production Telegram transport (grammY driver) |
-| [@teactjs/plugin-sdk](/docs/packages/plugin-sdk) | `bun add @teactjs/plugin-sdk` | Authoring your own plugins with `definePlugin` |
-| [@teactjs/storage](/docs/packages/storage) | `bun add @teactjs/storage` | `useStorage`, memory / file drivers, async driver interface, `createSessionStore` |
-| [@teactjs/redis](/docs/packages/redis) | `bun add @teactjs/redis` | Redis storage + sessions (ioredis, node-redis, Bun, Upstash) |
-| [@teactjs/postgres](/docs/packages/postgres) | `bun add @teactjs/postgres` | Postgres storage + sessions (pg, postgres.js, Neon, PGlite) |
-| [@teactjs/sqlite](/docs/packages/sqlite) | `bun add @teactjs/sqlite` | SQLite storage + sessions (`bun:sqlite`, better-sqlite3) |
-| [@teactjs/mongodb](/docs/packages/mongodb) | `bun add @teactjs/mongodb` | MongoDB storage + sessions |
-| [@teactjs/cloudflare](/docs/packages/cloudflare) | `bun add @teactjs/cloudflare` | Workers D1 / KV storage + sessions |
-| [@teactjs/i18n](/docs/packages/i18n) | `bun add @teactjs/i18n` | `i18nPlugin`, built-in UI strings, `LanguagePicker`, `useFormat` |
-| [@teactjs/plugins](/docs/packages/plugins) | `bun add @teactjs/plugins` | Rate limiting, logging, maintenance, filters, error reporting, analytics, flags, broadcasts |
-| [@teactjs/testing](/docs/packages/testing) | `bun add -D @teactjs/testing` | Unit-testing bots without hitting Telegram |
-| [@teactjs/cli](/docs/packages/cli) | `bun add -D @teactjs/cli` | Local `teact` commands (dev, build, add, deploy, doctor, …) |
-| [create-teact](/docs/packages/create-teact) | `bun create teact` | Scaffolding a new project |
+## Packing list
 
-<Callout type="info">
-`@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer` no longer exist — they were folded
-into `@teactjs/core`. Import the engine and every hook from `@teactjs/core`, and components from
+| Package | What it contains | Install | Docs |
+| ------- | ---------------- | ------- | ---- |
+| `@teactjs/core` | `createBot`, `createRouter`, every hook (session, router, events, media, data, forms, streaming, auth, i18n, payments), `halt`/`compose`, the `Adapter` contract, React re-exports | `npm i @teactjs/core react` | [core](/docs/packages/core) |
+| `@teactjs/ui` | `Message`, inline and reply keyboards, media, polls, locations, formatting, layout; re-exports `ErrorBoundary`, `useQuery`, `useMutation` | `npm i @teactjs/ui` | [ui](/docs/packages/ui) |
+| `@teactjs/telegram` | `TelegramAdapter` (grammY, auto-retry; polling, webhook server, `bot.fetch()`), `serializeOutput`, `conversationsPlugin`, `defineConversation`, `streamPlugin` | `npm i @teactjs/telegram` | [telegram](/docs/packages/telegram) |
+| `@teactjs/plugin-sdk` | `definePlugin` — middleware, providers, DI services, lifecycle hooks | `npm i @teactjs/plugin-sdk` | [plugin-sdk](/docs/packages/plugin-sdk) |
+| `@teactjs/storage` | `storagePlugin`, `useStorage`, `useGlobalStorage`, `useStorageBackend`, memory/file drivers, the async driver interface, `createSessionStore`, `runDriverConformance` | `npm i @teactjs/storage` | [storage](/docs/packages/storage) |
+| `@teactjs/redis` | `RedisDriver`, `redisSessionStore`, `redisPlugin`/`useRedis` — ioredis (incl. Cluster), node-redis, Bun, Upstash | `npm i @teactjs/redis ioredis` | [redis](/docs/packages/redis) |
+| `@teactjs/postgres` | `PostgresDriver`, `postgresSessionStore`, `postgresPlugin`/`usePostgres` — pg, postgres.js, Neon, PGlite | `npm i @teactjs/postgres pg` | [postgres](/docs/packages/postgres) |
+| `@teactjs/sqlite` | Synchronous `SqliteDriver`, `SqliteAsyncDriver`, `sqliteSessionStore`, `sqlitePlugin`/`useSqlite` — `bun:sqlite`, better-sqlite3 | `npm i @teactjs/sqlite` | [sqlite](/docs/packages/sqlite) |
+| `@teactjs/mongodb` | `MongoDriver`, `mongoSessionStore`, `mongoPlugin`/`useMongo` | `npm i @teactjs/mongodb mongodb` | [mongodb](/docs/packages/mongodb) |
+| `@teactjs/cloudflare` | `D1Driver`, `KVDriver`, `d1SessionStore`, `kvSessionStore` for Workers | `npm i @teactjs/cloudflare` | [cloudflare](/docs/packages/cloudflare) |
+| `@teactjs/i18n` | `i18nPlugin`, UI string packs in 19 languages, `LanguagePicker`, `useFormat`, `useT`, locale metadata | `npm i @teactjs/i18n` | [i18n](/docs/packages/i18n) |
+| `@teactjs/plugins` | `rateLimit`, `logger`, `maintenance`, `chatFilter`, `ignoreOld`, `errorReporter`, `analytics`/`useTrack`, `featureFlags`/`useFlag`, `createBroadcaster` | `npm i @teactjs/plugins` | [plugins](/docs/packages/plugins) |
+| `@teactjs/testing` | `MockAdapter`, `renderBot` | `npm i -D @teactjs/testing` | [testing](/docs/packages/testing) |
+| `@teactjs/cli` | The `teact` command: create, dev, build, start, add, typecheck, generate, doctor, info, routes, deploy, webhook | `npm i -D @teactjs/cli` | [cli](/docs/packages/cli) |
+| `create-teact` | Interactive project scaffolder | `bun create teact my-bot` | [create-teact](/docs/packages/create-teact) |
+
+The database packages need their storage peers too: `npm i @teactjs/storage` alongside any of
+redis, postgres, sqlite, mongodb or cloudflare.
+
+## Which packages do I need?
+
+Every bot needs the three core packages:
+
+```npm
+npm i @teactjs/core @teactjs/ui @teactjs/telegram react
+```
+
+Then add what your bot does:
+
+| If you need… | Add |
+| ------------ | --- |
+| A new project with everything wired | `bun create teact my-bot` (installs core, ui, telegram, cli and your picks) |
+| State that survives restarts (`useStorage`) | `@teactjs/storage` (file driver, zero setup) |
+| Several instances, or serverless with shared state | `@teactjs/storage` + a database package |
+| Cloudflare Workers | `@teactjs/storage` + `@teactjs/cloudflare` (D1 or KV), or Upstash via `@teactjs/redis`, or Neon via `@teactjs/postgres` |
+| A single server without a database server | `@teactjs/storage` + `@teactjs/sqlite` |
+| More than one language | `@teactjs/i18n` (or just `createI18n` from core) |
+| Rate limits, logging, error reporting, analytics, flags, broadcasts | `@teactjs/plugins` |
+| Imperative `await conversation.prompt()` flows | nothing extra — `conversationsPlugin` is in `@teactjs/telegram` |
+| Your own reusable plugin | `@teactjs/plugin-sdk` |
+| Tests without Telegram | `@teactjs/testing` (dev) |
+| `teact dev`, `build`, `add`, `doctor`, `deploy` | `@teactjs/cli` (dev; already there with create-teact) |
+
+<Tabs items={['Long-running server', 'Cloudflare Workers', 'Tests']}>
+<Tab value="Long-running server">
+
+```npm
+npm i @teactjs/core @teactjs/ui @teactjs/telegram @teactjs/storage @teactjs/redis @teactjs/plugins react ioredis
+```
+
+Polling or the built-in webhook server, Redis for state and sessions, production plugins.
+
+</Tab>
+<Tab value="Cloudflare Workers">
+
+```npm
+npm i @teactjs/core @teactjs/ui @teactjs/telegram @teactjs/storage @teactjs/cloudflare react
+```
+
+`bot.fetch()` in a Worker, D1 for state and sessions. Scaffold the Worker with `teact deploy`.
+
+</Tab>
+<Tab value="Tests">
+
+```npm
+npm i -D @teactjs/testing
+```
+
+`MockAdapter` replaces `TelegramAdapter`; no token or network needed.
+
+</Tab>
+</Tabs>
+
+## Import map
+
+| Import from | For |
+| ----------- | --- |
+| `@teactjs/core` | `createBot`, `createRouter`, `defineConfig`, every hook, `halt`, React primitives (`useState`, …) |
+| `@teactjs/ui` | Components |
+| `@teactjs/telegram` | `TelegramAdapter`, `conversationsPlugin`, `defineConversation`, `streamPlugin` |
+| `@teactjs/storage` | `storagePlugin`, `useStorage`, `createSessionStore` |
+| `@teactjs/<database>` | Drivers, session stores, `use<Database>()` |
+| `@teactjs/i18n` (and `@teactjs/i18n/locales`) | `i18nPlugin`, `LanguagePicker`, `useFormat`, `useT`; the raw packs |
+
+<Callout type="info" title="Removed packages">
+`@teactjs/react`, `@teactjs/runtime` and `@teactjs/renderer` no longer exist — they were folded into
+`@teactjs/core`. Import the engine and every hook from `@teactjs/core`, and components from
 `@teactjs/ui`.
 </Callout>
+
+## Versioning
+
+All 15 packages are one **fixed** release group (Changesets `fixed`): every release bumps them
+together to the same version, so `@teactjs/core@0.2.0-alpha.1` always pairs with
+`@teactjs/ui@0.2.0-alpha.1`. Keep every `@teactjs/*` package on the same version — `teact doctor`
+warns when they differ and prints the command to align them.
+
+Peer dependency ranges:
+
+| Package | Peer dependencies |
+| ------- | ----------------- |
+| `@teactjs/core` | `react ^18.0.0 \|\| ^19.0.0` |
+| `@teactjs/ui`, `@teactjs/telegram`, `@teactjs/plugin-sdk`, `@teactjs/storage`, `@teactjs/testing` | `react`, `@teactjs/core ^0.2.0-alpha.1` |
+| `@teactjs/i18n` | `react`, `@teactjs/core`, `@teactjs/ui` |
+| `@teactjs/plugins` | `react`, `@teactjs/core`, `@teactjs/storage` (optional) |
+| `@teactjs/cloudflare` | `react`, `@teactjs/core`, `@teactjs/storage` |
+| `@teactjs/redis` | `react`, core, storage, plugin-sdk; optional `ioredis ^5`, `redis ^4 \|\| ^5`, `@upstash/redis ^1` |
+| `@teactjs/postgres` | `react`, core, storage, plugin-sdk; optional `pg >=8`, `postgres >=3`, `@neondatabase/serverless >=0.9`, `@electric-sql/pglite >=0.2` |
+| `@teactjs/sqlite` | `react`, core, storage, plugin-sdk; optional `better-sqlite3 >=9` |
+| `@teactjs/mongodb` | `react`, core, storage, plugin-sdk; optional `mongodb ^5 \|\| ^6 \|\| ^7` |
+| `@teactjs/cli`, `create-teact` | none |
+
+`@teactjs/*` peers use `^0.2.0-alpha.1`. `@teactjs/core` brings `react-reconciler`, `i18next` and
+`react-i18next`; `@teactjs/telegram` brings `grammy`, `@grammyjs/auto-retry`,
+`@grammyjs/conversations` and `@grammyjs/stream`. Don't pin `i18next`/`react-i18next` yourself —
+two majors would break the react-i18next singleton.
+
+<Callout type="warn" title="One React">
+Only one copy of React may be installed. Two copies cause "Invalid hook call" errors; `teact doctor`
+detects them.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation" description="Requirements and first install." />
+  <Card title="@teactjs/core" href="/docs/packages/core" description="The engine and every hook." />
+  <Card title="Upgrading" href="/docs/getting-started/upgrading" description="Moving between releases." />
+  <Card title="@teactjs/cli" href="/docs/packages/cli" description="teact add installs and wires packages for you." />
+</Cards>

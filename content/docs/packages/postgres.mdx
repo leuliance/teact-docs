@@ -1,167 +1,261 @@
 ---
 title: "@teactjs/postgres"
-description: Postgres storage driver, durable session store and plugin — pg, postgres.js, Neon (HTTP, edge) and PGlite.
+description: API reference for the Postgres storage driver, durable session store and plugin — pg, postgres.js, Neon (HTTP, edge) and PGlite.
 ---
 
-Postgres storage for Teact: a `PostgresDriver` (an `AsyncStorageDriver`) for `storagePlugin` and
-`useStorage`, a durable session store, and a plugin for running queries from components. It works
-with any Postgres — Supabase, Neon, Vercel Postgres, RDS, self-hosted servers and PGlite. If you
-use Drizzle or Prisma, pass the underlying `pg` pool.
+`@teactjs/postgres` stores Teact state in a single Postgres table: a `PostgresDriver`
+(`AsyncStorageDriver`) for `storagePlugin` and `useStorage`, `postgresSessionStore` for durable
+sessions, and `postgresPlugin` + `usePostgres` to run SQL from components. It works with any
+Postgres — Supabase, Neon, Vercel Postgres, RDS, self-hosted and PGlite. If you use Drizzle or Prisma,
+pass the underlying `pg` pool.
 
-```bash
-bun add @teactjs/postgres @teactjs/storage
-# plus ONE client:
-bun add pg                         # node-postgres (Supabase, RDS, Vercel Postgres pool, ...)
-bun add postgres                   # postgres.js
-bun add @neondatabase/serverless   # Neon: HTTP (edge) or WebSocket Pool
-bun add @electric-sql/pglite       # Postgres in WASM, for tests and local dev
+```npm
+npm i @teactjs/postgres @teactjs/storage pg
 ```
 
-Every client library is an optional peer dependency; the driver talks to clients through small
-structural interfaces and never imports them. With the CLI: `teact add postgres --client neon`
-(`pg` | `postgres` | `neon` | `pglite`).
+Install **one** client: `pg` (node-postgres), `postgres` (postgres.js), `@neondatabase/serverless`
+(Neon) or `@electric-sql/pglite`. All are optional peers (`pg >=8`, `postgres >=3`,
+`@neondatabase/serverless >=0.9`, `@electric-sql/pglite >=0.2`); the driver talks to them through
+small structural interfaces and never imports them. Other peers: `@teactjs/core`,
+`@teactjs/storage`, `@teactjs/plugin-sdk`, `react`.
+
+With the CLI: `teact add postgres --client neon` (`pg` | `postgres` | `neon` | `pglite`; aliases
+`pg`, `postgresql`, `neon`, `supabase`).
+
+**When to use**
+
+- You already run Postgres and want bot state and sessions next to your app data.
+- You want SQL access (`usePostgres().query`) for leaderboards, reports and joins.
+- On the edge, with Neon's HTTP driver.
+
+## Quick example
+
+<Tabs items={['pg', 'postgres.js', 'Neon (HTTP)', 'PGlite']}>
+<Tab value="pg">
+
+```ts title="src/db.ts"
+import { Pool } from "pg";
+import { storagePlugin } from "@teactjs/storage";
+import { PostgresDriver, postgresPlugin, postgresSessionStore } from "@teactjs/postgres";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const pg = new PostgresDriver({ client: pool, closeClient: true });
+
+export const plugins = [storagePlugin({ driver: pg }), postgresPlugin({ driver: pg })];
+export const sessionStore = postgresSessionStore(pg, { ttl: 30 * 24 * 3600_000 });
+```
+
+</Tab>
+<Tab value="postgres.js">
+
+```ts title="src/db.ts"
+import postgres from "postgres";
+import { storagePlugin } from "@teactjs/storage";
+import { PostgresDriver, postgresPlugin, postgresSessionStore } from "@teactjs/postgres";
+
+const sql = postgres(process.env.DATABASE_URL!);
+export const pg = new PostgresDriver({ client: sql, closeClient: true });
+
+export const plugins = [storagePlugin({ driver: pg }), postgresPlugin({ driver: pg })];
+export const sessionStore = postgresSessionStore(pg);
+```
+
+</Tab>
+<Tab value="Neon (HTTP)">
+
+```ts title="src/db.ts"
+import { neon } from "@neondatabase/serverless";
+import { storagePlugin } from "@teactjs/storage";
+import { PostgresDriver, postgresPlugin, postgresSessionStore } from "@teactjs/postgres";
+
+// One HTTPS request per query — works on Workers, Vercel Edge and other fetch-only runtimes.
+export const pg = new PostgresDriver({ client: neon(process.env.DATABASE_URL!) });
+
+export const plugins = [storagePlugin({ driver: pg }), postgresPlugin({ driver: pg })];
+export const sessionStore = postgresSessionStore(pg);
+```
+
+For Neon's WebSocket `Pool`, pass it like a `pg` pool (`fromPg`).
+
+</Tab>
+<Tab value="PGlite">
+
+```ts title="src/db.ts"
+import { PGlite } from "@electric-sql/pglite";
+import { storagePlugin } from "@teactjs/storage";
+import { PostgresDriver, postgresPlugin, postgresSessionStore } from "@teactjs/postgres";
+
+// Postgres in WASM, persisted to ./data/pg — for local dev and tests.
+export const pg = new PostgresDriver({ client: new PGlite("./data/pg"), closeClient: true });
+
+export const plugins = [storagePlugin({ driver: pg }), postgresPlugin({ driver: pg })];
+export const sessionStore = postgresSessionStore(pg);
+```
+
+</Tab>
+</Tabs>
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { plugins, sessionStore } from "./db";
+import { router } from "./router";
+
+const bot = createBot({ router, adapter: new TelegramAdapter(), plugins, session: { store: sessionStore } });
+if (import.meta.main) bot.start();
+```
 
 ## Exports
 
-| Export | Kind | Description |
-| ------ | ---- | ----------- |
-| `PostgresDriver` | class | `AsyncStorageDriver` backed by a table (default `teact_storage`). |
-| `postgresSessionStore` | function | `postgresSessionStore(driverOrOptions, { prefix?, ttl? })` → `SessionStore`. |
-| `postgresPlugin` | plugin | Registers a driver as the `'postgres'` service. |
-| `usePostgres` | hook | Returns the registered `PostgresDriver` (`query()` runs raw SQL). |
-| `fromPg`, `fromPostgresJs`, `fromNeon`, `fromPglite` | functions | Explicit client adapters. |
-| `toQueryFn`, `closeClient` | functions | Lower-level client helpers. |
-| `createTableSql`, `createTableStatements` | functions | The DDL the driver runs, for your own migrations. |
-| `quotePgIdent`, `POSTGRES_SERVICE` | utils | Identifier quoting, service key. |
-| `PostgresDriverOptions`, `PostgresPluginOptions`, `QueryFn`, `PostgresClient` | types | Options and client shapes. |
+| Export | Kind | Signature | Description |
+| ------ | ---- | --------- | ----------- |
+| `PostgresDriver` | class | `new PostgresDriver(opts: PostgresDriverOptions)` | `AsyncStorageDriver` over one table. |
+| `postgresSessionStore` | function | `(source: PostgresDriver \| PostgresDriverOptions, opts?: CreateSessionStoreOptions) => SessionStore` | Durable sessions. |
+| `postgresPlugin` | function | `(opts: PostgresPluginOptions) => TeactPlugin` | Registers a driver as the `'postgres'` service (plugin name `teact-postgres`). |
+| `usePostgres` | hook | `() => PostgresDriver` | The registered driver; `query()` runs raw SQL. |
+| `POSTGRES_SERVICE` | const | `'postgres'` | Service key. |
+| `fromPg` | function | `(client: PgLikeClient) => QueryFn` | pg `Pool`/`Client`, Neon `Pool`, `@vercel/postgres`, any pg-compatible pool. |
+| `fromPostgresJs` | function | `(sql: PostgresJsLikeClient) => QueryFn` | postgres.js (uses `sql.unsafe(text, values)`). |
+| `fromNeon` | function | `(sql: NeonLikeClient) => QueryFn` | Neon HTTP `neon()` (`sql.query()` or the older `sql(text, values)`). |
+| `fromPglite` | function | `(db: PgliteLikeClient) => QueryFn` | PGlite. |
+| `toQueryFn` | function | `(client: PostgresClient) => QueryFn` | Auto-detect and adapt a client. |
+| `closeClient` | function | `(client: PostgresClient) => Promise<void>` | Call `end()` (pg, postgres.js) or `close()` (PGlite). |
+| `createTableSql` | function | `(table = 'teact_storage', schema?: string) => string` | The DDL as one string. |
+| `createTableStatements` | function | `(table = 'teact_storage', schema?: string) => string[]` | The DDL statements. |
+| `quotePgIdent` | function | `(name: string) => string` | Validate and double-quote an identifier. |
 
-## Clients
+Types: `PostgresDriverOptions`, `PostgresPluginOptions`, `QueryFn`
+(`(text, values?) => Promise<Row[]>`), `Row`, `PostgresClient`, `PgLikeClient`, `PgliteLikeClient`,
+`PostgresJsLikeClient`, `NeonLikeClient`.
 
-`new PostgresDriver({ client })` detects the client type automatically. The adapters make it
-explicit:
+## PostgresDriver
 
-```ts
-import { PostgresDriver, fromPg, fromPostgresJs, fromNeon, fromPglite } from "@teactjs/postgres";
+<TypeTable
+  type={{
+    client: { type: 'PostgresClient', description: 'pg Pool/Client, postgres.js sql, Neon neon() or Pool, PGlite, or a QueryFn. Auto-detected.', required: true },
+    table: { type: 'string', description: 'Table name; validated and quoted.', default: "'teact_storage'" },
+    schema: { type: 'string', description: 'Schema, e.g. "bot" → "bot"."teact_storage". Must exist.', default: 'search_path' },
+    autoMigrate: { type: 'boolean', description: 'Create the table and index lazily on first use (CREATE … IF NOT EXISTS).', default: 'true' },
+    closeClient: { type: 'boolean', description: 'End the client in close(), which storagePlugin calls on stop.', default: 'false' },
+  }}
+/>
 
-// pg: Pool or Client
-import { Pool } from "pg";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-new PostgresDriver({ client: pool }); // or fromPg(pool)
+Client detection (`toQueryFn`): a function with `.unsafe` is postgres.js; a function with `.query`
+is Neon HTTP; an object with `.query` is pg / PGlite / Neon `Pool`; any other function is a
+`QueryFn`. Anything else throws `Unsupported client`.
 
-// postgres.js
-import postgres from "postgres";
-new PostgresDriver({ client: postgres(process.env.DATABASE_URL!) }); // or fromPostgresJs(sql)
+### Methods
 
-// Neon over HTTP: works on the edge
-import { neon } from "@neondatabase/serverless";
-new PostgresDriver({ client: neon(process.env.DATABASE_URL!) }); // or fromNeon(sql)
+| Method | Description |
+| ------ | ----------- |
+| `get<T>(key)` | Read a live value (expiry checked in SQL against `now()`). |
+| `set(key, value, { ttl? })` | Single-statement upsert; `ttl` in ms sets `expires_at`. `undefined` deletes. |
+| `incr(key, by = 1, { ttl? })` | Atomic counter in one `UPSERT … RETURNING`, exact `numeric` arithmetic. Missing or expired rows count as 0 and get the `ttl`; a live row keeps its expiry. Rejects when the stored value is not a JSON number. |
+| `delete(key)`, `has(key)` | Remove / check a live key. |
+| `keys(prefix?)` | Live keys, sorted. |
+| `entries(prefix)` | Live `[key, value]` pairs in one query. |
+| `clear(prefix?)` | Delete under `prefix`, or the whole table. |
+| `purgeExpired()` | Delete expired rows; resolves the number removed. |
+| `query<R>(text, values?)` | Raw parameterised SQL (`$1`, `$2`, …) on the same client. |
+| `migrate()` | Create the table now (otherwise lazy); retried if it failed. |
+| `close()` | Ends the client only with `closeClient: true`. |
 
-// PGlite
-import { PGlite } from "@electric-sql/pglite";
-new PostgresDriver({ client: new PGlite("./data/pg") }); // or fromPglite(db)
+Properties: `client` (as passed in) and `tableRef` (the quoted, qualified table name).
 
-// Anything else: a (text, values) => Promise<rows> function
-new PostgresDriver({ client: async (text, values) => (await myClient.run(text, values)).rows });
-```
-
-## Storage
-
-```ts
-import { createBot } from "@teactjs/core";
-import { storagePlugin } from "@teactjs/storage";
-import { PostgresDriver } from "@teactjs/postgres";
-
-const pg = new PostgresDriver({ client: pool });
-
-createBot({ plugins: [storagePlugin({ driver: pg })] /* ... */ });
-```
-
-Before each update, `storagePlugin` loads the chat's keys with a single `entries(prefix)` query, and
-it awaits every write before the update finishes, so writes are durable even on serverless.
-
-### Options
-
-| Option | Default | Notes |
-| ------ | ------- | ----- |
-| `client` | (required) | See [Clients](#clients). |
-| `table` | `'teact_storage'` | Validated and quoted identifier. |
-| `schema` | search_path | e.g. `'bot'` → `"bot"."teact_storage"`. The schema must exist. |
-| `autoMigrate` | `true` | Run `CREATE TABLE IF NOT EXISTS` once, lazily, on first use. |
-| `closeClient` | `false` | End the client in `close()`, which `storagePlugin` calls on stop. |
+Prefixes are matched literally: `%`, `_` and `\` are escaped (`LIKE $1 ESCAPE '\'`).
 
 ### Schema and migrations
 
-```sql
+```sql title="migrations/001_teact_storage.sql"
 CREATE TABLE IF NOT EXISTS "teact_storage" (key TEXT COLLATE "C" PRIMARY KEY, value JSON NOT NULL, expires_at TIMESTAMPTZ);
 CREATE INDEX IF NOT EXISTS "teact_storage_expires_at_idx" ON "teact_storage" (expires_at) WHERE expires_at IS NOT NULL;
 ```
 
-Values are stored in a `JSON` column, which keeps object key order and strings containing `\u0000`
-exactly as written. Tables created with a `JSONB` column by earlier versions keep working, so there
-is nothing to migrate.
+`createTableSql(table, schema?)` returns exactly this. If you run migrations yourself (Drizzle Kit,
+Prisma Migrate, Supabase migrations), add it there and pass `autoMigrate: false`.
 
-`createTableSql(table, schema?)` returns this DDL. If you run migrations yourself (Drizzle Kit,
-Prisma Migrate, Supabase migrations), add it there and pass `autoMigrate: false`. `COLLATE "C"`
-lets prefix queries (`LIKE 'prefix%'`) use the primary-key index.
-
-### Driver API
-
-```ts
-await pg.get<T>(key);               // expiry is checked in SQL against now()
-await pg.set(key, value, { ttl });  // upsert; ttl in ms (0, negative or Infinity = no expiry)
-await pg.incr(key, by?, { ttl? });  // atomic counter (one UPSERT … RETURNING); ttl only on create
-await pg.delete(key); await pg.has(key);
-await pg.keys(prefix?); await pg.entries(prefix); await pg.clear(prefix?);
-await pg.purgeExpired();            // DELETE expired rows; returns the count (run from a cron)
-await pg.query(sql, values);        // raw parameterised query on the same client
-await pg.migrate();                 // create the table now (otherwise lazy)
-```
-
-Prefixes are matched literally: `%`, `_` and `\` are escaped.
-
-## Sessions
+- `COLLATE "C"` lets prefix `LIKE` queries use the primary-key b-tree.
+- `JSON` (not `JSONB`) keeps object key order and accepts `\u0000` in strings. Tables created with
+  `JSONB` by older versions keep working; there is nothing to migrate.
+- Two processes racing `CREATE TABLE IF NOT EXISTS` on a fresh database may see SQLSTATE `23505`
+  or `42P07`; the driver treats both as success.
 
 ```ts
-import { postgresSessionStore } from "@teactjs/postgres";
-
-createBot({
-  session: { store: postgresSessionStore(pg, { ttl: 30 * 24 * 60 * 60 * 1000 }) },
-  // or postgresSessionStore({ client: pool, table: "sessions" })
-});
+import { createTableSql } from "@teactjs/postgres";
+console.log(createTableSql("bot_state", "bot")); // "bot"."bot_state" + "bot_state_expires_at_idx"
 ```
 
-## Plugin and `usePostgres`
+<Callout type="info" title="Expired rows">
+Expired rows are hidden from every read, but stay on disk until deleted. If you use `ttl` heavily,
+run `pg.purgeExpired()` from a cron job.
+</Callout>
 
-```tsx
-import { postgresPlugin, usePostgres } from "@teactjs/postgres";
+## postgresSessionStore
+
+```ts
+postgresSessionStore(pg, { prefix: "session:", ttl: 30 * 24 * 3600_000 });
+postgresSessionStore({ client: pool, table: "sessions" }); // its own driver and table
+```
+
+The first argument is a `PostgresDriver` or driver options; the second is `CreateSessionStoreOptions`
+(`prefix` default `'session:'`, `ttl` in ms). Each session write is awaited before the update
+finishes, so it is safe on serverless.
+
+## postgresPlugin and usePostgres
+
+<TypeTable
+  type={{
+    driver: { type: 'PostgresDriver', description: 'Share the driver you also pass to storagePlugin / postgresSessionStore.' },
+    client: { type: 'PostgresClient', description: 'Or build a new driver from these options (client required when there is no driver).' },
+    table: { type: 'string', description: 'Driver option.' },
+    schema: { type: 'string', description: 'Driver option.' },
+    autoMigrate: { type: 'boolean', description: 'Driver option.' },
+    closeOnStop: { type: 'boolean', description: 'End the client when the bot stops.', default: 'false' },
+  }}
+/>
+
+Without `client` or `driver` it throws `postgresPlugin needs { client } or { driver }`.
+
+```tsx title="src/screens/Leaderboard.tsx"
 import { useQuery } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
+import { usePostgres } from "@teactjs/postgres";
 
-createBot({ plugins: [storagePlugin({ driver: pg }), postgresPlugin({ driver: pg })] });
-// or postgresPlugin({ client: pool, closeOnStop: true })
-
-function Leaderboard() {
+export function Leaderboard() {
   const pg = usePostgres();
-  const { data } = useQuery({
-    key: "top",
-    fn: () => pg.query("SELECT name, points FROM scores ORDER BY points DESC LIMIT 10"),
+  const { data, isLoading } = useQuery({
+    key: "top-10",
+    fn: () =>
+      pg.query<{ name: string; points: number }>(
+        "SELECT name, points FROM scores ORDER BY points DESC LIMIT $1",
+        [10],
+      ),
   });
-  // ...
+  if (isLoading) return <Message text="Loading…" />;
+  return <Message text={data!.map((r, i) => `${i + 1}. ${r.name} — ${r.points}`).join("\n")} />;
 }
 ```
 
-The plugin only ends the client on stop when you pass `closeOnStop: true` — by default you own the
-pool.
+<TelegramPreview bot="Quiz Bot" user="/top" text={"1. Ana — 42\n2. Sam — 37\n3. Lee — 30"} />
 
 ## Edge and serverless
 
-Neon's HTTP driver (`neon()`) works on Cloudflare Workers, Vercel Edge and other fetch-only runtimes
-because each query is a single HTTPS request. TCP clients (`pg`, `postgres.js`) need Node or Bun,
-or a runtime with TCP sockets. On serverless functions, use your provider's pooler (Supabase's
-transaction pooler, Neon's pooled connection string).
+- Neon's HTTP driver (`neon()`) works on Cloudflare Workers, Vercel Edge and other fetch-only
+  runtimes because each query is a single HTTPS request.
+- `pg` and `postgres.js` need TCP sockets (Node, Bun). On serverless functions, use your provider's
+  pooler (Supabase's transaction pooler, Neon's pooled connection string).
+- The table migration runs once per process (or isolate), on the first query.
 
-## Do / Don't
+<Callout type="warn" title="Shared pools">
+Leave `closeClient` / `closeOnStop` off when the pool is shared with the rest of your app — the
+driver would end it on `bot.stop()`.
+</Callout>
 
-- **Do** pass `autoMigrate: false` and add the DDL to your migrations if you manage the schema.
-- **Do** schedule `purgeExpired()` if you use `ttl` heavily — expired rows are hidden on read but
-  stay on disk until purged.
-- **Don't** use `pg` or `postgres.js` on edge runtimes; use `neon()` there.
+## Related
+
+<Cards>
+  <Card title="Databases guide" href="/docs/guides/databases" description="Choosing and wiring a backend." />
+  <Card title="@teactjs/storage" href="/docs/packages/storage" description="useStorage and createSessionStore." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Serverless and edge deploys." />
+  <Card title="@teactjs/sqlite" href="/docs/packages/sqlite" description="A local, file-based alternative." />
+</Cards>
