@@ -380,3 +380,22 @@
 #nd-page div[class~='@container'] button:hover {
   background: color-mix(in srgb, var(--color-kraft-tint) 70%, transparent);
 }
+
+/* A code block that is a tab panel's only child fills the panel (no frame in a frame) */
+#nd-page [role='tabpanel']:has(> figure.shiki:only-child) {
+  padding: 0;
+}
+
+#nd-page [role='tabpanel'] > figure.shiki:only-child {
+  margin: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+/* Code inside the table of contents reads as text, not as a label */
+#nd-toc code {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
