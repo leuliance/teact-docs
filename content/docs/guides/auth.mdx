@@ -1,58 +1,336 @@
 ---
 title: Authentication
-description: authPlugin and useAuth for roles; useAuthSession for token-based login state in the session store.
+description: Role-based access with authPlugin and useAuth, token login state with useAuthSession, and protecting routes, commands and buttons with router guards and middleware.
 ---
 
-## Role-based auth (plugin)
+Telegram already tells your bot who sent each update: `ctx.userId` is the sender's Telegram id and
+cannot be forged by the user. Teact builds two small tools on top of that:
 
-```ts
-import { authPlugin } from "@teactjs/core";
+- **`authPlugin` + `useAuth`**: roles from lists of Telegram user ids (admins, moderators, …).
+- **`useAuthSession`**: access and refresh tokens for *your own* backend, kept in the chat session.
 
-const bot = createBot({
-  plugins: [authPlugin({ admins: [123456789] })],
-  // ...
-});
-```
+Both live in `@teactjs/core`. Combine them with [router guards](/docs/guides/router) and
+[middleware](/docs/guides/middleware-plugins) to protect screens and commands.
 
-```tsx
-import { useAuth } from "@teactjs/core";
+## First example: an admin panel
 
-function Admin() {
-  const { isAdmin, role, is, hasAny } = useAuth();
-  if (!isAdmin) return <Message text="Unauthorized" />;
-  return <Message text="Admin panel" />;
+```tsx title="src/index.tsx"
+import { createBot, authPlugin, useAuth } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+import { TelegramAdapter } from "@teactjs/telegram";
+
+function Home() {
+  const { isAdmin, role, is } = useAuth();
+
+  return (
+    <Message text={`Welcome! Your role: ${role ?? "member"}`}>
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button text="📦 Orders" onClick={() => {}} />
+          {is("support") && <Button text="🎧 Tickets" onClick={() => {}} />}
+        </ButtonRow>
+        {isAdmin && (
+          <ButtonRow>
+            <Button text="⚙️ Admin panel" onClick={() => {}} />
+          </ButtonRow>
+        )}
+      </InlineKeyboard>
+    </Message>
+  );
 }
+
+export const bot = createBot({
+  component: Home,
+  adapter: new TelegramAdapter(),
+  plugins: [
+    authPlugin({
+      admins: [123456789],
+      roles: { support: [555000111, "555000222"] },
+    }),
+  ],
+});
+
+if (import.meta.main) bot.start();
 ```
 
-## Token session (useAuthSession)
+<TelegramPreview
+  bot="Shop Bot"
+  user="/start"
+  text={"Welcome! Your role: admin"}
+  buttons={[["📦 Orders", "🎧 Tickets"], ["⚙️ Admin panel"]]}
+  caption="What an admin sees"
+/>
 
-```tsx
+A user in neither list sees only "Orders" and `role` is `null`.
+
+## Roles with authPlugin
+
+`authPlugin(config)` adds a React provider that computes the sender's auth state on every render.
+It has no middleware: it never blocks an update by itself. It decides what `useAuth()` returns.
+
+<TypeTable
+  type={{
+    admins: {
+      type: '(string | number)[]',
+      description: 'Telegram user ids with admin access. Admins pass every is() check.',
+      default: '[]',
+    },
+    roles: {
+      type: 'Record<string, (string | number)[]>',
+      description: 'Named roles mapped to user ids. Ids may be numbers or strings; they are compared as strings.',
+      default: '{}',
+    },
+  }}
+/>
+
+### How the role is resolved
+
+1. If the sender's id is in `admins`, `isAdmin` is `true` and `role` is `"admin"`.
+2. Otherwise `role` is the **first** role in `roles` (in declaration order) that lists the id.
+3. Otherwise `role` is `null`.
+
+A user listed under several roles gets the first one as `role`, but `is()` only compares against that
+single role. Order `roles` from most to least privileged.
+
+### useAuth
+
+`useAuth()` returns the state for the user who sent the current update. It throws
+`useAuth requires the authPlugin to be registered` without the plugin.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `userId` | `string` | The sender's id. |
+| `isAdmin` | `boolean` | Listed in `admins`. |
+| `role` | `string \| null` | `"admin"`, the first matching role, or `null`. |
+| `is(role)` | `(role: string) => boolean` | `true` for admins, or when `role` equals the user's role. `is("admin")` is `true` only for admins. |
+| `hasAny(...roles)` | `(...roles: string[]) => boolean` | `true` when `is()` passes for at least one role. |
+
+In a group chat the state follows whoever sent the update. When a member taps a button on a message
+an admin opened, the screen re-renders with the tapping member's role.
+
+## Token sessions with useAuthSession
+
+`useAuthSession()` stores tokens for your own API in the chat session, under the `auth` key. It works
+with whatever session store you configured, so tokens survive restarts and serverless cold starts
+with a [durable store](/docs/guides/databases#durable-sessions).
+
+```tsx title="src/pages/Account.tsx"
 import { useAuthSession } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 
-function LoginPage() {
+export function Account() {
   const auth = useAuthSession();
 
-  if (auth.isAuthenticated) {
-    return <Message text={`Welcome!`} />;
+  if (!auth.isAuthenticated) {
+    return (
+      <Message text="🔑 You're not logged in.">
+        <InlineKeyboard>
+          <ButtonRow>
+            <Button
+              text="Log in"
+              onClick={() =>
+                auth.login({
+                  accessToken: `tok_${Date.now()}`,
+                  refreshToken: "ref_123",
+                  expiresAt: Date.now() + 60 * 60_000, // 1 hour
+                })
+              }
+            />
+          </ButtonRow>
+        </InlineKeyboard>
+      </Message>
+    );
   }
 
   return (
-    <Message text="Log in">
+    <Message text={`✅ Logged in. Token expires ${new Date(auth.expiresAt!).toLocaleTimeString()}`}>
       <InlineKeyboard>
-        <Button
-          text="Login"
-          onClick={() =>
-            auth.login({ accessToken: "tok", refreshToken: "ref" })
-          }
-        />
+        <ButtonRow>
+          <Button text="Log out" variant="destructive" onClick={() => auth.logout()} />
+        </ButtonRow>
       </InlineKeyboard>
     </Message>
   );
 }
 ```
 
-- `auth.login(tokens)` — store access/refresh + optional `expiresAt`
-- `auth.logout()` — clear
-- `auth.setAccessToken(token, expiresAt?)` — refresh flow
+<TelegramPreview
+  bot="Account Bot"
+  user="/account"
+  text={"🔑 You're not logged in."}
+  buttons={[["Log in"]]}
+/>
 
-Combine with [Router](/docs/guides/router) guards to protect routes.
+### Reference
+
+| Member | Type | Description |
+| ------ | ---- | ----------- |
+| `isAuthenticated` | `boolean` | An access token is stored and `expiresAt` (if set) is in the future. |
+| `accessToken` | `string \| null` | The token, or `null` when logged out **or expired**. |
+| `refreshToken` | `string \| null` | Kept after the access token expires, so you can refresh. |
+| `expiresAt` | `number \| null` | Expiry in ms since the epoch. |
+| `login(tokens)` | `(tokens: AuthTokens) => void` | Store `{ accessToken, refreshToken?, expiresAt? }`, replacing previous tokens. |
+| `logout()` | `() => void` | Clear the `auth` session key. |
+| `setAccessToken(token, expiresAt?)` | `(token: string, expiresAt?: number) => void` | Replace the access token after a refresh; keeps `refreshToken`, and `expiresAt` unless given. |
+
+The data lives at `session.auth` as `{ accessToken, refreshToken?, expiresAt? }`, which is also what
+route guards read.
+
+## Protecting routes
+
+Route guards (`beforeLoad`) run before a route renders. They receive `{ path, params, session,
+reply }`, so they can read session data such as `session.auth`, but not the user's Telegram id. Use
+the patterns below depending on what decides access.
+
+### Logged-in users only (session)
+
+```tsx title="src/router.tsx"
+import { createRouter, redirect } from "@teactjs/core";
+import { Home } from "./pages/Home";
+import { Account } from "./pages/Account";
+import { Billing } from "./pages/Billing";
+import { Orders } from "./pages/Orders";
+
+const isLoggedIn = (session: Record<string, any>) =>
+  !!session.auth?.accessToken && !(session.auth.expiresAt && Date.now() > session.auth.expiresAt);
+
+export const router = createRouter({
+  "/": Home,
+  "/account": Account,
+
+  // Redirect to the login screen
+  "/billing": {
+    component: Billing,
+    beforeLoad: ({ session }) => {
+      if (!isLoggedIn(session)) return redirect("/account");
+    },
+  },
+
+  // Or answer with a message and buttons instead of loading the route
+  "/orders": {
+    component: Orders,
+    beforeLoad: ({ session, reply }) => {
+      if (!isLoggedIn(session)) {
+        return reply("🔒 Log in to see your orders.", {
+          buttons: [[{ text: "Log in", route: "/account" }, { text: "Home", route: "/" }]],
+        });
+      }
+    },
+  },
+});
+```
+
+A guard can also return JSX (`return <Account />`) to render the login screen in place, keeping the
+URL and its `params`.
+
+### Admin-only routes (roles)
+
+Because guards don't see the user id, check roles inside the route with `useAuth`. A small wrapper
+keeps the route table readable:
+
+```tsx title="src/auth/requireRole.tsx"
+import type { FunctionComponent } from "react";
+import { useAuth } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function requireRole(role: string, Page: FunctionComponent): FunctionComponent {
+  return function Guarded() {
+    const { is } = useAuth();
+    if (!is(role)) {
+      return (
+        <Message text="⛔ This screen is for staff only.">
+          <InlineKeyboard>
+            <Button text="Back to menu" route="/" />
+          </InlineKeyboard>
+        </Message>
+      );
+    }
+    return <Page />;
+  };
+}
+```
+
+```tsx title="src/router.tsx"
+export const router = createRouter({
+  "/": Home,
+  "/admin": requireRole("admin", AdminPanel),
+  "/tickets": {
+    component: requireRole("support", Tickets),
+    command: { name: "tickets", description: "Open support tickets" },
+  },
+});
+```
+
+`authPlugin`'s provider wraps the router, so `useAuth()` works in every route component and in
+anything a guard renders.
+
+### Roles stored at login
+
+If roles come from your backend rather than a fixed list, save them in the session when the user
+logs in and let the guard read them:
+
+```tsx
+const [, setSession] = useSession<{ roles?: string[] }>();
+// after your API confirmed the user:
+auth.login({ accessToken });
+setSession({ roles: ["editor"] });
+
+// router
+"/editor": {
+  component: Editor,
+  beforeLoad: ({ session }) => (session.roles?.includes("editor") ? undefined : redirect("/")),
+},
+```
+
+<Callout type="info" title="Guards fail closed">
+If a `beforeLoad` guard throws, the router renders the not-found page instead of the protected
+route, and logs the error. A chain of more than 5 redirects is treated as a loop and also ends on
+the not-found page.
+</Callout>
+
+## Protecting commands and updates
+
+`authPlugin` only shapes what components see. To stop an update before anything renders (admin-only
+commands, a private beta), use a middleware with `halt(ctx)`:
+
+```ts title="src/middleware/adminCommands.ts"
+import { halt, type Middleware } from "@teactjs/core";
+
+const ADMINS = new Set(["123456789"]);
+const ADMIN_COMMANDS = new Set(["ban", "broadcast", "stats"]);
+
+export const adminCommands: Middleware = async (ctx) => {
+  const cmd = ctx.text?.startsWith("/") ? ctx.text.slice(1).split(/[\s@]/)[0].toLowerCase() : undefined;
+  if (cmd && ADMIN_COMMANDS.has(cmd) && !ADMINS.has(ctx.userId)) halt(ctx);
+};
+```
+
+```ts
+createBot({ /* ... */ middleware: [adminCommands] });
+```
+
+Command handlers also run after middleware, so a halted update never reaches them. Inside a handler
+you can check `ctx.user.id` directly. For allow-lists of users or chats, the ready-made
+[`chatFilter`](/docs/guides/middleware-plugins#chatfilter) plugin does the same with less code.
+
+## Gotchas
+
+- **`authPlugin` is not a gate.** A user without a role still reaches every route that doesn't check.
+  Guard routes or halt updates explicitly.
+- **Keep id lists in one place.** If you use both `authPlugin` and a middleware, build both from the
+  same constant or environment variable.
+- **Don't trust message text for identity.** Use `ctx.userId` / `useAuth().userId`, never a username
+  the user typed. Usernames can change; ids don't.
+- **Tokens are only as durable as the session store.** With the default in-memory store a restart
+  logs everyone out, and on serverless each isolate has its own sessions.
+- **Button handlers are not awaited.** Call `auth.login()` synchronously in `onClick`; an async token
+  exchange that finishes after the update is not guaranteed to be saved on serverless.
+
+## Related
+
+<Cards>
+  <Card title="Router" href="/docs/guides/router" description="Routes, params and beforeLoad guards." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="halt(), pipeline order and chatFilter." />
+  <Card title="Databases" href="/docs/guides/databases" description="Durable session stores for tokens and roles." />
+  <Card title="Hooks" href="/docs/guides/hooks" description="useSession, useBot and the other runtime hooks." />
+</Cards>

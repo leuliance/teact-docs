@@ -1,91 +1,612 @@
 ---
 title: Hooks reference
-description: Runtime and context hooks — navigation, session, events, media, and data.
+description: Every hook exported by @teactjs/core — update context, session, routing, events, media senders, data fetching, flows, streaming, auth, services, i18n and payments — with signatures, return values and examples.
 ---
 
+Teact components are React components, and Teact's hooks give them access to the bot: the
+incoming update, the chat's session, the router, Telegram's API and the plugins you installed. All
+hooks on this page are imported from **`@teactjs/core`**.
 
-All hooks are imported from **`@teactjs/core`**. React primitives are re-exported
-there too, so you rarely import from `react` directly.
+Hooks only work inside components rendered by a bot (a route component, `createBot({ component })`
+or anything below them). Outside that tree they throw an error that says so.
 
-## React primitives (re-exported)
+## A first example
 
-`useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`,
-`useContext`, `useId`, `use`, `createContext`, `memo`, `Fragment`, `Suspense`.
+```tsx title="src/screens/Profile.tsx"
+import { useBot, useSession, useNavigate } from "@teactjs/core";
+import { Message, Bold, InlineKeyboard, Button } from "@teactjs/ui";
 
-```tsx
-import { useState } from "@teactjs/core";
+export function Profile() {
+  const { user } = useBot();
+  const [session, setSession] = useSession<{ visits?: number }>();
+  const navigate = useNavigate();
+  const visits = session.visits ?? 0;
+
+  return (
+    <Message>
+      <Bold>{user.firstName}</Bold>, you've opened this screen {visits} times.
+      <InlineKeyboard>
+        <Button text="Count visit" onClick={() => setSession({ visits: visits + 1 })} />
+        <Button text="Home" onClick={() => navigate("/")} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
 ```
 
-## Navigation
+<TelegramPreview text="Ada, you've opened this screen 3 times." buttons={[["Count visit"], ["Home"]]} />
 
-| Hook | Purpose |
-| ---- | ------- |
-| `useNavigate()` | `(path, opts?) => void` — modes: `push`, `replace`, `stack`, `dismiss` |
-| `useParams()` | Typed dynamic route params — `useParams<"/pokemon/:id">()` or `useParams<{ id: string }>()` |
-| `useRoute()` | Current `{ path, params }` |
+## How hooks see an update
 
-See [Router](/docs/guides/router).
+Each Telegram update (a message or a button press) renders the chat's component tree once more.
+During that render, the context hooks (`useBot`, `useText`, `useCallbackData`, …) describe **that
+update**. The tree itself persists between updates in the same process, so `useState` keeps its
+value until a `/command` or a route button resets the tree.
 
-## Context & session
+| Update | `useText()` | `useCallbackData()` | `useCommand()` |
+| --- | --- | --- | --- |
+| User sends `hello` | `"hello"` | `undefined` | `null` |
+| User sends `/search pika` (route command) | `"/search pika"` | `undefined` | `{ name: "search", args: ["pika"] }` |
+| User taps a button | `undefined` | The button's callback data | `null`, or `{ name: "", args: [] }` for a route button |
+| User shares a contact or photo | `undefined` | `undefined` | `null` |
 
-| Hook | Purpose |
-| ---- | ------- |
-| `useBot()` | Bot instance and metadata |
-| `useSession<T>()` | `[session, setSession]` — read/update session |
-| `useChatId()` | Current chat id |
-| `useText()` | Last message text |
-| `useCommand()` | Parsed command and args |
+## React primitives
 
-## Telegram context
+These React APIs are re-exported, so most files need only one import:
 
-| Hook | Purpose |
-| ---- | ------- |
-| `useChat()` | Current chat object |
-| `useTelegram()` | Low-level `{ api, chatId }` access |
+`useState`, `useEffect`, `useReducer`, `useMemo`, `useCallback`, `useRef`, `useContext`,
+`useId`, `use`, `createContext`, `memo`, `Fragment`, `createElement`, `Suspense`.
+
+```tsx
+import { useState, useEffect, useBot } from "@teactjs/core";
+```
+
+## Update context
+
+### useBot
+
+```ts
+function useBot(): BotContext;
+```
+
+The full context of the current update.
+
+<TypeTable
+  type={{
+    chatId: { type: 'string', description: 'Chat the update belongs to.' },
+    userId: { type: 'string', description: 'Sender ID.' },
+    user: { type: 'User', description: '`{ id, username?, firstName?, lastName?, isBot?, languageCode?, platform }`.' },
+    platform: { type: 'string', description: '"telegram" with the Telegram adapter.' },
+    messageId: { type: 'string', description: 'The incoming message, or the message the pressed button is on.' },
+    text: { type: 'string', description: 'Message text (undefined for button presses and media).' },
+    callbackData: { type: 'string', description: 'Callback data of the pressed button.' },
+    botUsername: { type: 'string', description: "The bot's own username, e.g. for t.me links." },
+    raw: { type: 'any', description: 'The platform context (the grammY context on Telegram).' },
+  }}
+/>
+
+```tsx
+const { user, botUsername } = useBot();
+<Button text="Invite a friend" url={`https://t.me/${botUsername}?start=ref-${user.id}`} />;
+```
+
+### useSession
+
+```ts
+function useSession<T extends SessionData = SessionData>(): [T, (patch: Partial<T>) => void];
+```
+
+Per-chat data that persists across updates in the configured session store (in memory by default;
+see [Storage → Sessions on a storage driver](/docs/guides/storage#sessions-on-a-storage-driver)). The setter shallow-merges the patch and
+queues a write; Teact awaits all writes before it finishes handling the update.
+
+```tsx
+const [session, setSession] = useSession<{ theme?: "light" | "dark" }>();
+
+<Button
+  text={session.theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+  onClick={() => setSession({ theme: session.theme === "dark" ? "light" : "dark" })}
+/>;
+```
+
+<Callout type="info" title="Setting the session doesn't schedule a render">
+  `setSession` updates the session object immediately but does not re-render by itself. Inside an
+  `onClick` handler that doesn't matter: the screen renders right after the handler, with the new
+  value. In an effect or after an `await`, also update some `useState` if the screen should
+  change.
+</Callout>
+
+### useChatId
+
+```ts
+function useChatId(): string;
+```
+
+```tsx
+const chatId = useChatId();
+const { data } = useQuery({ key: `orders:${chatId}`, fn: () => fetchOrders(chatId) });
+```
+
+### useText
+
+```ts
+function useText(): string | undefined;
+```
+
+The current message's text. `undefined` for button presses and non-text messages.
+
+```tsx
+const text = useText();
+if (text?.toLowerCase() === "help") return <Message text="Send /start to begin." />;
+```
+
+### useCallbackData
+
+```ts
+function useCallbackData(): string | undefined;
+```
+
+The pressed button's callback data, or `undefined`. Useful with string `onClick` values:
+
+```tsx
+const data = useCallbackData(); // "size:L" after tapping <Button text="L" onClick="size:L" />
+const size = data?.startsWith("size:") ? data.slice(5) : undefined;
+```
+
+### useCommand
+
+```ts
+function useCommand(): { name: string; args: string[] } | null;
+```
+
+The command that opened this screen, set only during that command's update. Capture it in a
+`useState` initializer. Details in [Commands → useCommand](/docs/guides/commands#reading-the-command-in-a-component-usecommand).
+
+```tsx
+const cmd = useCommand();
+const [query] = useState(() => cmd?.args.join(" ") ?? "");
+```
+
+### usePlatform
+
+```ts
+function usePlatform(): string;
+```
+
+The platform name, `"telegram"` with the Telegram adapter.
+
+## Routing
+
+All three throw outside a router. See [Router](/docs/guides/router).
+
+### useNavigate
+
+```ts
+function useNavigate(): (path: string, opts?: { mode?: "replace" | "push" | "stack" | "dismiss" }) => void;
+```
+
+```tsx
+const navigate = useNavigate();
+<Button text="Open card" onClick={() => navigate("/pokemon/25", { mode: "push" })} />;
+```
+
+### useParams
+
+```ts
+function useParams(): Record<string, string>;
+function useParams<"/pokemon/:id">(): { id: string };   // typed from the path template
+function useParams<{ id: string }>(): { id: string };   // explicit shape
+```
+
+```tsx
+const { id } = useParams<"/pokemon/:id">();
+```
+
+### useRoute
+
+```ts
+function useRoute(): { path: string; params: Record<string, string> };
+```
+
+```tsx
+const { path } = useRoute(); // "/pokemon/25"
+```
+
+## Chat and Telegram
+
+### useChat
+
+```ts
+function useChat(): ChatInfo;
+```
+
+A flat summary of the update: `{ chatId, userId, user, messageId?, text?, callbackData?, platform }`.
+
+```tsx
+const { user, text } = useChat();
+```
+
+### useTelegram
+
+```ts
+function useTelegram(): { api: any; ctx: any; chat: any; from: any; chatId: number };
+```
+
+Low-level access for things Teact doesn't wrap: `api` is grammY's Bot API client, `ctx` the grammY
+context, `chat` and `from` the raw Telegram objects, `chatId` the chat ID as a number.
+
+```tsx
+const { api, chatId } = useTelegram();
+
+<Button text="Typing…" onClick={() => api.sendChatAction(chatId, "typing")} />;
+```
+
+Calls made through `api` bypass the render tree: Teact doesn't track or edit the messages they
+send.
+
+## Media senders
+
+These hooks return functions that send media to the current chat right away, outside the render
+tree. Use them for extra messages next to the screen (a receipt PDF, a photo album, a location),
+and use [components](/docs/guides/components#media) when the media **is** the screen.
+
+### useMedia
+
+```ts
+function useMedia(): MediaSenders;
+```
+
+All senders in one object. Options use Telegram's snake_case names.
+
+| Sender | Signature |
+| --- | --- |
+| `photo` | `(src, opts?: { caption?, parse_mode?, has_spoiler? })` |
+| `video` | `(src, opts?: { caption?, parse_mode?, duration?, width?, height?, supports_streaming? })` |
+| `animation` | `(src, opts?: { caption?, parse_mode?, duration?, width?, height? })` |
+| `audio` | `(src, opts?: { caption?, parse_mode?, performer?, title?, duration? })` |
+| `voice` | `(src, opts?: { caption?, parse_mode?, duration? })` |
+| `document` | `(src, opts?: { caption?, filename? })` |
+| `sticker` | `(src, opts?: { emoji? })` |
+| `location` | `(latitude, longitude, opts?: { live_period?, horizontal_accuracy?, heading?, proximity_alert_radius? })` |
+| `contact` | `(phoneNumber, firstName, opts?: { last_name?, vcard? })` |
+| `venue` | `(latitude, longitude, title, address, opts?: { foursquare_id?, google_place_id? })` |
+| `poll` | `(question, options: string[], opts?: { is_anonymous?, type?, allows_multiple_answers?, correct_option_id?, explanation?, open_period? })` |
+
+Each returns the Telegram API call's promise (the sent message).
+
+```tsx title="src/screens/Receipt.tsx"
+import { useMedia } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Receipt({ orderId }: { orderId: string }) {
+  const media = useMedia();
+  return (
+    <Message text={`Order ${orderId} is paid.`}>
+      <InlineKeyboard>
+        <Button
+          text="📄 Send PDF receipt"
+          onClick={() => media.document(`https://example.com/receipts/${orderId}.pdf`, { filename: `receipt-${orderId}.pdf` })}
+        />
+        <Button text="📍 Pickup point" onClick={() => media.venue(52.52, 13.405, "Pickup", "Alexanderplatz 1")} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+### Individual senders
+
+Each sender is also available as its own hook with the same signature as the matching
+`useMedia()` entry:
+
+`usePhoto`, `useVideo`, `useAnimation`, `useAudio`, `useVoice`, `useDocument`, `useSticker`,
+`useLocation`, `useContact`, `useVenue`, `usePoll`.
+
+```tsx
+const sendPhoto = usePhoto();
+await sendPhoto("https://example.com/cat.jpg", { caption: "A cat", has_spoiler: true });
+
+const sendPoll = usePoll();
+await sendPoll("Lunch?", ["Pizza", "Sushi"], { is_anonymous: false });
+```
+
+<Callout type="warn">
+  These hooks **send** media. To **read** media the user sent you (a photo, a contact, a location),
+  use [`useEventData`](#useeventdata) or [`useOn`](#useon).
+</Callout>
 
 ## Events
 
-`useOn("message:text", handler)` subscribes to update types;
-`useEventData("message:photo")` reads the last matching payload. See
-[Events](/docs/guides/events).
+See [Events](/docs/guides/events) for the full event list.
 
-## Media
+### useOn
 
-`useMedia()` returns an object of send helpers
-(`photo`, `video`, `animation`, `audio`, `voice`, `document`, `sticker`,
-`location`, `contact`, `venue`, `poll`). Or grab a single sender with the
-per-type hooks:
-
-`usePhoto`, `useVideo`, `useAnimation`, `useAudio`, `useVoice`, `useDocument`,
-`useSticker`, `useLocation`, `useContact`, `useVenue`, `usePoll`.
-
-```tsx
-import { usePhoto, useMedia } from "@teactjs/core";
-
-const sendPhoto = usePhoto();
-await sendPhoto("https://example.com/cat.jpg", { caption: "A cat" });
-
-const media = useMedia();
-await media.location(51.5, -0.12);
+```ts
+function useOn(event: TelegramEvent, handler: (data: any, ctx: EventContext) => void): void;
 ```
 
-There are also per-type **read** hooks for incoming media on the current update:
-`usePhoto`-style reads via `useMedia`, plus `usePoll`, `useLocation`,
-`useContact`, `useVenue`, `useSticker`, `useDocument`, `useVoice`, `useAudio`,
-`useAnimation`, `useVideo`.
+Runs `handler` once per matching update, after the render commits. `ctx` has `navigate`, `chatId`,
+`userId`, `user`, `reply(text)` and `raw`.
+
+```tsx
+useOn("photo", (sizes, ctx) => {
+  ctx.reply(`Got a photo in ${sizes.length} sizes.`);
+});
+```
+
+### useEventData
+
+```ts
+function useEventData<T = any>(event: TelegramEvent): T | null;
+```
+
+The current update's data for `event`, or `null`. Read it during render:
+
+```tsx
+const location = useEventData<{ latitude: number; longitude: number }>("location");
+if (location) return <Message text={`You're at ${location.latitude}, ${location.longitude}`} />;
+```
 
 ## Data
 
-- `useQuery` — keyed async data with caching and refetch.
-- `useMutation` — async mutations with loading/error state.
+Both hooks are also re-exported from `@teactjs/ui`.
 
-Both are exported from `@teactjs/core` (and re-exported from `@teactjs/ui`).
+### useQuery
 
-## Flows, streaming, auth, payments, i18n
+```ts
+function useQuery<T>(options: UseQueryOptions<T>): UseQueryResult<T>;
+```
 
-- [Conversations](/docs/guides/conversations) — `useConversation`
-- [Forms](/docs/guides/forms) — `useForm`
-- [Streaming](/docs/guides/streaming) — `useStream`
-- [Auth](/docs/guides/auth) — `useAuth`, `useAuthSession`
-- [Payments](/docs/guides/payments) — `useInvoice`
-- [i18n](/docs/guides/i18n) — `useLocale`, `createI18n`
+<TypeTable
+  type={{
+    key: { type: 'string', required: true, description: 'Cache key. Changing it fetches again.' },
+    fn: { type: '() => Promise<T>', required: true, description: 'Loads the data.' },
+    enabled: { type: 'boolean', default: 'true', description: 'Fetch on mount.' },
+    staleTime: { type: 'number', default: '30000', description: 'Milliseconds a cached result stays fresh.' },
+    refetchInterval: { type: 'number', default: '0', description: 'Refetch every n milliseconds (0 disables).' },
+  }}
+/>
+
+Returns `{ data, error, isLoading, isError, isSuccess, refetch }`.
+
+```tsx title="src/screens/Weather.tsx"
+import { useQuery } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Weather() {
+  const { data, isLoading, isError, refetch } = useQuery({
+    key: "weather:berlin",
+    fn: () => fetch("https://api.example.com/weather/berlin").then((r) => r.json() as Promise<{ temp: number }>),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return <Message text="Loading…" />;
+  if (isError || !data) return <Message text="Couldn't load the weather." />;
+
+  return (
+    <Message text={`Berlin: ${data.temp}°C`}>
+      <InlineKeyboard>
+        <Button text="🔄 Refresh" onClick={() => refetch()} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+<Callout type="warn" title="The cache is shared by every chat">
+  `useQuery` caches by `key` in one process-wide map. Include the chat or user ID in the key for
+  per-user data (`orders:${chatId}`), or one user's data is served to another.
+</Callout>
+
+### useMutation
+
+```ts
+function useMutation<T, V = void>(options: UseMutationOptions<T, V>): UseMutationResult<T, V>;
+```
+
+Options: `fn: (variables: V) => Promise<T>`, optional `onSuccess(data)` and `onError(error)`.
+Returns `{ data, error, isLoading, isError, isSuccess, mutate, reset }`. `mutate(variables)`
+resolves to the result, or `undefined` on error.
+
+```tsx
+const save = useMutation({
+  fn: (name: string) => api.updateProfile(chatId, { name }),
+  onSuccess: () => navigate("/profile"),
+});
+
+<Button text={save.isLoading ? "Saving…" : "Save"} onClick={() => save.mutate("Ada")} />;
+```
+
+## Flows
+
+### useConversation
+
+```ts
+function useConversation<T extends StepsConfig>(steps: T): ConversationState<keyof T>;
+function useConversation(options?: { validate?: (key: string, value: string) => true | string }): ConversationState;
+```
+
+Step-by-step questions answered with text or buttons. Full reference in
+[Conversations](/docs/guides/conversations).
+
+```tsx
+const conv = useConversation({
+  name: { prompt: "What's your name?" },
+  plan: { ask: "Pick a plan:", options: [["Free", "Pro"]] },
+});
+return conv.render(() => <Message text={`${conv.data.name} chose ${conv.data.plan}`} />);
+```
+
+### useForm
+
+```ts
+function useForm<T extends Record<string, FormFieldDef>>(schema: T): FormResult<keyof T>;
+```
+
+A schema of fields with prompts, options and validators. Full reference in
+[Forms](/docs/guides/forms).
+
+```tsx
+const form = useForm({
+  email: { prompt: "Your email?", validate: (v) => v.includes("@") || "That's not an email" },
+});
+return form.render(() => <Message text={`Thanks, ${form.data.email}`} />);
+```
+
+### useConversationContext and useFormContext
+
+```ts
+function useConversationContext(): ConversationState;
+function useFormContext<K extends string = string>(): FormResult<K>;
+```
+
+Read the nearest `<Conversation>` or `<Form>` state from a child component. They throw outside
+those components.
+
+## Streaming
+
+### useStream
+
+```ts
+function useStream(opts?: { throttleMs?: number }): { text: string; isStreaming: boolean; stream(source: AsyncIterable<string>): void };
+```
+
+Accumulates text from an async iterable and re-renders at most every `throttleMs` (default `500`).
+See [Streaming](/docs/guides/streaming).
+
+```tsx
+const { text, isStreaming, stream } = useStream({ throttleMs: 250 });
+<Message text={text || "Ask me something"}>…</Message>;
+```
+
+## Auth
+
+### useAuth
+
+```ts
+function useAuth(): { userId: string; isAdmin: boolean; role: string | null; is(role: string): boolean; hasAny(...roles: string[]): boolean };
+```
+
+Role checks from `authPlugin({ admins, roles })`. Throws if the plugin isn't registered.
+
+```tsx
+const { is } = useAuth();
+if (!is("moderator")) return <Message text="Moderators only." />;
+```
+
+### useAuthSession
+
+```ts
+function useAuthSession(): AuthSessionState;
+```
+
+Token storage in the session under `session.auth`: `isAuthenticated`, `accessToken`,
+`refreshToken`, `expiresAt`, `login(tokens)`, `logout()` and `setAccessToken(token, expiresAt?)`.
+A token whose `expiresAt` has passed counts as logged out.
+
+```tsx
+const auth = useAuthSession();
+if (!auth.isAuthenticated)
+  return (
+    <Message text="Please log in">
+      <InlineKeyboard>
+        <Button text="Log in" onClick={() => auth.login({ accessToken: "tok_abc", expiresAt: Date.now() + 3_600_000 })} />
+      </InlineKeyboard>
+    </Message>
+  );
+```
+
+Both are covered in [Auth](/docs/guides/auth).
+
+## Services
+
+### useService
+
+```ts
+function useService<T = unknown>(key: string): T;
+```
+
+A value a plugin registered with `ctx.provideService(key, value)`. Throws with a hint if nothing is
+registered under `key`.
+
+```tsx
+const db = useService<SupabaseClient>("supabase");
+```
+
+### useOptionalService
+
+```ts
+function useOptionalService<T = unknown>(key: string): T | undefined;
+```
+
+The non-throwing variant, for features that work with or without a plugin.
+
+```tsx
+const analytics = useOptionalService<{ hits: number }>("analytics");
+```
+
+See [Middleware & plugins](/docs/guides/middleware-plugins).
+
+## i18n
+
+### useLocale
+
+```ts
+function useLocale(): { t: TFunction; locale: string; setLocale(locale: string): void; availableLocales: string[] };
+```
+
+Translations for the chat's current locale, from `createI18n`. See [i18n](/docs/guides/i18n).
+
+```tsx
+const { t, locale, setLocale } = useLocale();
+<Message text={t("welcome")}>
+  <InlineKeyboard>
+    <Button text={locale === "en" ? "Amharic" : "English"} onClick={() => setLocale(locale === "en" ? "am" : "en")} />
+  </InlineKeyboard>
+</Message>;
+```
+
+## Payments
+
+### useInvoice
+
+```ts
+function useInvoice(config: InvoiceConfig): { send(): Promise<void>; status: "idle" | "pending" | "success" | "failed"; receipt: SuccessfulPayment | null; error: string | null };
+```
+
+Sends a Telegram invoice and tracks its payment. See [Payments](/docs/guides/payments).
+
+```tsx
+const invoice = useInvoice({ title: "Pro", description: "One month", payload: "pro-1m", providerToken: "", currency: "XTR", prices: [{ label: "Pro", amount: 100 }] });
+<Button text="⭐ Pay 100 Stars" onClick={invoice.send} />;
+```
+
+## Hooks from other packages
+
+Some packages ship hooks of their own. They follow the same rules:
+
+| Hook | Package | Guide |
+| --- | --- | --- |
+| `useStorage`, `useGlobalStorage`, `useStorageBackend` | `@teactjs/storage` | [Storage](/docs/guides/storage) |
+| `useTrack`, `useFlag` | `@teactjs/plugins` | [Plugins package](/docs/packages/plugins) |
+
+## Gotchas
+
+- **Work after the first render needs a long-running process.** `useStream`, `useQuery` results,
+  `useOn` effects and anything after an `await` in a handler render in a later commit. On
+  serverless the request ends after the first commit, so those updates are lost. See
+  [Deployment → Edge checklist](/docs/guides/deployment#edge-checklist).
+- **State lives with the chat's tree.** `useState` survives updates in the same process, but a
+  `/command`, a route button, a restart or a fresh serverless instance starts from scratch. Keep
+  anything that must last in `useSession` or `useStorage`.
+- **`onClick` handlers aren't awaited.** An async handler's code after `await` runs after the
+  update was rendered; its state changes show up in a second render.
+
+## Related
+
+<Cards>
+  <Card title="Router" href="/docs/guides/router" description="useNavigate, useParams and useRoute in context." />
+  <Card title="Events" href="/docs/guides/events" description="All event names for useOn and useEventData." />
+  <Card title="Storage" href="/docs/guides/storage" description="Persistent per-user and global data." />
+  <Card title="@teactjs/core package" href="/docs/packages/core" description="Full export list." />
+</Cards>

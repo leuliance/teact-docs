@@ -1,163 +1,536 @@
 ---
 title: Router
-description: createRouter, route maps, co-located commands, guards, useNavigate, useParams, and useRoute.
+description: Map paths to screens with createRouter — route objects, beforeLoad guards, typed params, navigation modes, deep links, notFound and matching rules.
 ---
 
+The router turns a Teact bot into a set of screens addressed by paths, like `/`, `/settings` or
+`/pokemon/:id`. Buttons and commands open a path; the router picks the matching component, runs
+its guard and renders it into the chat. Use it as soon as your bot has more than one screen.
 
-The router maps paths to screens. A route value is either a **component** or an
-**object** with `component`, an optional `beforeLoad` guard, and an optional
-co-located `command`.
+Everything on this page comes from `@teactjs/core`.
 
-```ts
-import { createRouter } from "@teactjs/core";
+## A first router
 
+```tsx title="src/index.tsx"
+import { createBot, createRouter, useNavigate, useParams } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+function Home() {
+  return (
+    <Message text="Welcome to the Pokédex.">
+      <InlineKeyboard columns={2}>
+        <Button text="Pikachu" route="/pokemon/:id" params={{ id: 25 }} />
+        <Button text="Settings" route="/settings" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+function Pokemon() {
+  const { id } = useParams<"/pokemon/:id">();
+  const navigate = useNavigate();
+  return (
+    <Message text={`Pokémon #${id}`}>
+      <InlineKeyboard>
+        <Button text="Next" onClick={() => navigate(`/pokemon/${Number(id) + 1}`)} />
+        <Button text="Home" route="/" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+function Settings() {
+  return <Message text="Settings" />;
+}
+
+const router = createRouter({
+  "/": { component: Home, command: { name: "start", description: "Open the Pokédex" } },
+  "/pokemon/:id": Pokemon,
+  "/settings": Settings,
+});
+
+export const bot = createBot({ adapter: new TelegramAdapter(), router });
+
+if (import.meta.main) bot.start();
+```
+
+<TelegramPreview bot="Pokédex Bot" user="/start" text="Welcome to the Pokédex." buttons={[["Pikachu", "Settings"]]} />
+
+Tapping **Pikachu** edits the same message into the detail screen:
+
+<TelegramPreview bot="Pokédex Bot" edited text="Pokémon #25" buttons={[["Next"], ["Home"]]} />
+
+<Callout type="warn">
+  `createBot` takes either `component` (a single screen) or `router`. Pass exactly one; with
+  neither it throws.
+</Callout>
+
+## Routes
+
+### Route map
+
+`createRouter(routes, options?)` takes an object whose keys are paths and whose values are either a
+component or a route object:
+
+```tsx
 const router = createRouter(
   {
-    "/": Home,
-    "/settings": { component: Settings, beforeLoad: guardAuth },
-    "/pokemon/list": PokemonList,
-    "/pokemon/:id": PokemonDetail,
+    "/": Home,                                   // plain component
+    "/admin": {                                  // route object
+      component: AdminPanel,
+      beforeLoad: ({ session }) => (session.isAdmin ? undefined : "/"),
+      command: { name: "admin", description: "Admin panel" },
+    },
   },
   { notFound: NotFoundPage },
 );
 ```
 
-Wire it into `createBot`:
+<TypeTable
+  type={{
+    component: { type: 'FunctionComponent', required: true, description: 'The screen to render for this path.' },
+    beforeLoad: { type: 'RouteGuard', description: 'Synchronous guard that runs before the route renders. See Guards.' },
+    command: { type: 'RouteCommand', description: 'A bot command that opens this route: `{ name, description, deepLink? }`. See Co-located commands.' },
+  }}
+/>
 
-```ts
-import { createBot } from "@teactjs/core";
-import { TelegramAdapter } from "@teactjs/telegram";
+### Paths and params
 
-const bot = createBot({
-  router,
-  adapter: new TelegramAdapter(),
-  token: process.env.TELEGRAM_BOT_TOKEN!,
-});
-```
+- A segment that starts with `:` is a parameter: `/pokemon/:id` matches `/pokemon/25` with
+  `{ id: "25" }`. A parameter matches one segment (anything except `/`).
+- Several parameters are fine: `/team/:tid/member/:mid`.
+- Parameter values are always strings.
+- Other characters match literally.
 
-<Callout type="warn">
-  `component` at the root of `createBot` and `router` are **mutually exclusive** —
-  pass one or the other.
-</Callout>
+### Default route
 
-## Co-located commands
+The bot starts on `/` when you define it, otherwise on the first route in the map. Any update that
+arrives before a route is chosen (a new chat sending plain text, for example) renders the default
+route.
 
-Attach a Telegram command to the route it opens. The command name (without the
-leading slash), its menu `description`, and an optional `deepLink` resolver all
-live next to the route:
+### createRouter options
 
-```ts
-const router = createRouter({
-  "/pokedex": {
-    component: Pokedex,
-    command: {
-      name: "pokedex",
-      description: "Browse the Pokédex",
-      // /start <payload> → deep-link into a specific entry
-      deepLink: (args) => `/pokemon/${args[0]}`,
-    },
-  },
-});
-```
+<TypeTable
+  type={{
+    notFound: { type: 'FunctionComponent', description: 'Screen to render when no route matches, a guard throws, or guards redirect in a loop.', default: 'Built-in "Page not found" message pointing to /start' },
+  }}
+/>
 
-Collected commands are handed to the bot engine automatically, so `/pokedex`
-appears in Telegram's command menu and opens the route. See
-[Commands](/docs/guides/commands) for standalone (non-route) commands.
+## Matching and precedence
 
-## Route guards (`beforeLoad`)
+Routes are sorted once when the router is created, so the order you write them in doesn't matter:
 
-Guards run **before** a route renders. They are **synchronous** and receive
-`{ path, params, session, reply }`. A guard may return:
-
-- **`redirect("/login")`** — a path string (via the `redirect` helper)
-- **A JSX element** — render it in place of the route
-- **`reply(text, { buttons })`** — send a message with buttons (same shape as
-  command replies)
-- **`undefined`** — allow the route to load
+1. **Deeper paths first.** `/pokemon/:id/comments` is tried before `/pokemon/:id`.
+2. **At equal depth, static beats param.** `/pokemon/list` wins over `/pokemon/:id`, so `list` is
+   never captured as an `id`.
+3. **Trailing slashes are ignored.** `/settings/` matches `/settings`.
+4. **No match renders `notFound`.**
 
 ```tsx
-import { redirect } from "@teactjs/core";
-
-function guardAuth({ session, reply }) {
-  if (!session.userId) return redirect("/login");
-  if (session.banned) return reply("You are banned.", { buttons: [] });
-  return undefined; // allowed
-}
+createRouter({
+  "/pokemon/:id": PokemonCard,   // matches /pokemon/25
+  "/pokemon/list": PokemonList,  // matches /pokemon/list, even though it's declared second
+});
 ```
-
-<Callout type="warn">
-  Guards must be synchronous. Do all the async work (fetch, DB) beforehand and
-  read the result from `session`. A guard that **throws** fails **closed** — the
-  engine renders `notFound` and never leaks the protected page.
-</Callout>
 
 ## Navigation
 
+There are two ways to change screens.
+
+### Route buttons
+
+`<Button route="…" params={…} />` encodes the path in the button's callback data. It is the
+most robust option: it needs no in-memory handler, so it works after a restart and on any
+serverless instance.
+
 ```tsx
-import { useNavigate, useRoute, useParams } from "@teactjs/core";
+<Button text="Details" route="/pokemon/:id" params={{ id: 25 }} />
+<Button text="Home" route="/" />
+```
+
+A route button press resets the chat's component tree: the target screen mounts fresh, and any
+`useState` from the previous screens is discarded. The message the button lives on is edited.
+
+### useNavigate
+
+`useNavigate()` returns `navigate(path, options?)` for navigating from handlers and effects.
+
+```tsx
+const navigate = useNavigate();
+
+<Button text="Next" onClick={() => navigate(`/pokemon/${Number(id) + 1}`)} />;
+```
+
+`navigate` keeps the chat's component tree (it only swaps the screen), and it accepts a mode.
+
+### Navigation modes
+
+The `mode` option decides what happens to the current message:
+
+| Mode | Old message | New screen |
+| --- | --- | --- |
+| `replace` (default) | Edited in place | Shown in the same message |
+| `push` | Kept as is, buttons stay | Sent as a new message below |
+| `stack` | Buttons removed | Sent as a new message below |
+| `dismiss` | Buttons removed | Not sent |
+
+```tsx
+navigate("/pokemon/25");                       // replace: edit in place
+navigate("/pokemon/25", { mode: "push" });     // keep the list, send the card below
+navigate("/pokemon/25", { mode: "stack" });    // freeze the list (no buttons), send the card below
+navigate("/menu", { mode: "dismiss" });        // just close the buttons
+```
+
+<TelegramPreview caption="After stack mode" text="📋 Pokédex (page 1)" buttons={[]} />
+
+<TelegramPreview caption="…followed by" text="Pokémon #25" buttons={[["Back to list"]]} />
+
+`replace` edits only when it can: if the new screen is media, has a reply keyboard, or the
+current message is media, Teact sends a new message instead (see
+[Edit or send](/docs/guides/components#edit-or-send)).
+
+<TypeTable
+  type={{
+    mode: { type: "'replace' | 'push' | 'stack' | 'dismiss'", default: "'replace'", description: 'How to handle the current message.' },
+  }}
+/>
+
+### Reading the route
+
+```tsx
+import { useRoute, useParams } from "@teactjs/core";
+
+const { path, params } = useRoute(); // { path: "/pokemon/25", params: { id: "25" } }
+```
+
+`useNavigate`, `useParams` and `useRoute` throw when used outside a router (for example in a bot
+created with `component`).
+
+## Params
+
+`useParams()` has three forms. All return the same object at runtime; they differ in typing.
+
+```tsx
+// 1. Infer names from the path template (no codegen)
+const { id } = useParams<"/pokemon/:id">();                    // { id: string }
+const { tid, mid } = useParams<"/team/:tid/member/:mid">();    // { tid: string; mid: string }
+
+// 2. Give the shape explicitly
+const { id } = useParams<{ id: string }>();
+
+// 3. Untyped
+const params = useParams();                                    // Record<string, string>
+```
+
+The path-template form is powered by the exported `PathParams<P>` type, which you can use in your
+own helpers:
+
+```ts
+import type { PathParams } from "@teactjs/core";
+
+type CardParams = PathParams<"/pokemon/:id">; // { id: string }
+```
+
+Convert params yourself when you need numbers: `Number(id)`. A `notFound` screen gets empty
+params.
+
+## Guards (`beforeLoad`)
+
+A guard runs before its route renders and decides whether the route loads. It receives a
+`BeforeLoadContext`:
+
+<TypeTable
+  type={{
+    path: { type: 'string', description: 'The path being opened.' },
+    params: { type: 'Record<string, string>', description: 'Params matched from the path.' },
+    session: { type: 'Record<string, any>', description: "The chat's session data." },
+    reply: { type: '(text: string, options?: { buttons?: GuardButton[][] }) => GuardReply', description: 'Build a message (with optional route/url buttons) to show instead of the route.' },
+  }}
+/>
+
+### Return values
+
+| Return | Effect |
+| --- | --- |
+| `undefined` (or nothing) | The route loads |
+| A path string, e.g. `redirect("/login")` | Redirect to that path (its guard runs too) |
+| `{ redirect: "/login" }` | Same as a path string |
+| A JSX element, e.g. `<LoginPage />` | Render that element in place of the route |
+| `{ component: LoginPage }` | Render that component in place of the route |
+| `reply(text, { buttons })` | Render a message with buttons instead of the route |
+
+`redirect(path)` is a helper that returns the path; it reads better than a bare string. Returning
+the current path itself is treated as "allow".
+
+```tsx
+import { createRouter, redirect } from "@teactjs/core";
+
+createRouter({
+  // Redirect
+  "/secret": {
+    component: SecretPage,
+    beforeLoad: ({ session }) => {
+      if (!session.auth?.accessToken) return redirect("/login");
+    },
+  },
+
+  // Render something else at the same path
+  "/secret-inline": {
+    component: SecretPage,
+    beforeLoad: ({ session }) => {
+      if (!session.auth?.accessToken) return <LoginPage />;
+    },
+  },
+
+  // Reply with a message and buttons
+  "/secret-reply": {
+    component: SecretPage,
+    beforeLoad: ({ session, reply }) => {
+      if (!session.auth?.accessToken)
+        return reply("🔒 You need to log in first.", {
+          buttons: [[{ text: "🔑 Login", route: "/login" }, { text: "🏠 Menu", route: "/" }]],
+        });
+    },
+  },
+
+  "/login": LoginPage,
+});
+```
+
+<TelegramPreview text="🔒 You need to log in first." buttons={[["🔑 Login", "🏠 Menu"]]} />
+
+Guard reply buttons (`GuardButton`) take `text` plus `route` or `url`.
+
+A component or element rendered by a guard still sees the matched params through `useParams()`, so
+an `/order/:id` guard can show a preview of order `id` to logged-out users.
+
+### Guard rules
+
+- **Guards are synchronous.** Do async work (API calls, database reads) earlier, store the result
+  in the session, and read `session` in the guard.
+- **A guard that throws fails closed.** The error is logged and `notFound` renders; the protected
+  component never leaks.
+- **Redirects are followed up to 5 times.** A longer chain (usually a loop like `/a` → `/b` → `/a`)
+  logs a warning and renders `notFound`.
+
+## Co-located commands
+
+Give a route a `command` and the bot registers it for you: `/name` opens the route, and the
+command appears in Telegram's menu.
+
+<TypeTable
+  type={{
+    name: { type: 'string', required: true, description: 'Command without the slash, e.g. "pokedex" for /pokedex. Use lowercase: incoming commands are lowercased before matching.' },
+    description: { type: 'string', required: true, description: 'Text shown in the command menu.' },
+    deepLink: { type: '(args: string[]) => string', description: 'Turn the command arguments into a path. Used only when arguments are present.' },
+  }}
+/>
+
+```tsx
+createRouter({
+  "/list": { component: PokemonList, command: { name: "pokedex", description: "Browse the Pokédex" } },
+});
+```
+
+A command defined in `createBot({ commands })` with the same name overrides the route's command.
+See [Commands](/docs/guides/commands) for handler commands, menu registration and middleware.
+
+## Deep links
+
+A link like `https://t.me/YourBot?start=poke-25` makes Telegram send `/start poke-25` when the
+user taps **Start**. A `deepLink` resolver on the `start` command turns the payload into a path:
+
+```tsx title="src/router.tsx"
+export const router = createRouter({
+  "/": {
+    component: MainMenu,
+    command: {
+      name: "start",
+      description: "Open the menu",
+      deepLink: ([payload]) => {
+        if (payload?.startsWith("poke-")) return `/pokemon/${payload.slice(5)}`;
+        if (payload?.startsWith("comments-")) return `/pokemon/${payload.slice(9)}/comments`;
+        return "/";
+      },
+    },
+  },
+  "/pokemon/:id": PokemonCard,
+  "/pokemon/:id/comments": PokemonComments,
+});
+```
+
+Without arguments (`/start` alone), the command opens its own route. A resolved path that doesn't
+match any route renders `notFound`, and guards still apply to it.
+
+Build share links from the bot's own username:
+
+```tsx
+import { useBot } from "@teactjs/core";
+
+const { botUsername } = useBot();
+<Button text="Share" url={`https://t.me/${botUsername}?start=poke-${id}`} />;
+```
+
+Telegram only allows `A–Z`, `a–z`, `0–9`, `_` and `-` in the `start` payload (up to 64
+characters), so encode anything else.
+
+## Not found
+
+```tsx title="src/screens/NotFound.tsx"
+import { useRoute } from "@teactjs/core";
 import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 
-function Home() {
-  const navigate = useNavigate();
-  const { path, params } = useRoute();
-  const { id } = useParams<{ id: string }>();
+export function NotFound() {
+  const { path } = useRoute();
+  return (
+    <Message text={`Nothing at ${path}.`}>
+      <InlineKeyboard>
+        <Button text="🏠 Menu" route="/" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+createRouter({ "/": Home }, { notFound: NotFound });
+```
+
+`notFound` renders when no route matches, when a guard throws, and when guards redirect in a loop.
+Without it, Teact shows a built-in "Page not found" message that points the user to `/start`.
+
+## Recipes
+
+### Auth guard
+
+Keep the login state in the session and guard every protected route with one function:
+
+```tsx title="src/router.tsx"
+import { createRouter, redirect, type RouteGuard } from "@teactjs/core";
+
+const requireLogin: RouteGuard = ({ session }) => {
+  if (!session.auth?.accessToken) return redirect("/login");
+};
+
+const requireAdmin: RouteGuard = ({ session, reply }) => {
+  if (!session.auth?.accessToken) return redirect("/login");
+  if (session.role !== "admin")
+    return reply("Admins only.", { buttons: [[{ text: "🏠 Menu", route: "/" }]] });
+};
+
+export const router = createRouter({
+  "/": Home,
+  "/login": LoginPage,
+  "/orders": { component: Orders, beforeLoad: requireLogin },
+  "/admin": { component: AdminPanel, beforeLoad: requireAdmin },
+});
+```
+
+`useAuthSession()` stores tokens under `session.auth`, which is what these guards read. See
+[Auth](/docs/guides/auth).
+
+### Paginated list with params
+
+Put the page number in the path so every page is addressable, and use route buttons so paging
+works across restarts:
+
+```tsx title="src/screens/OrderList.tsx"
+import { useParams } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+import { ORDERS } from "../data";
+
+const PAGE_SIZE = 5;
+
+export function OrderList() {
+  const { page = "1" } = useParams<"/orders/page/:page">();
+  const n = Math.max(1, Number(page) || 1);
+  const items = ORDERS.slice((n - 1) * PAGE_SIZE, n * PAGE_SIZE);
+  const last = Math.ceil(ORDERS.length / PAGE_SIZE);
 
   return (
-    <Message text="Home">
+    <Message text={`Orders, page ${n} of ${last}`}>
       <InlineKeyboard>
-        <Button text="Settings" onClick={() => navigate("/settings")} />
-        <Button text="Back" onClick={() => navigate("/", { mode: "dismiss" })} />
+        {items.map((o) => (
+          <Button key={o.id} text={`#${o.id} · ${o.total}`} route="/orders/:id" params={{ id: o.id }} />
+        ))}
+        <ButtonRow>
+          {n > 1 && <Button text="⬅️ Prev" route="/orders/page/:page" params={{ page: n - 1 }} />}
+          {n < last && <Button text="Next ➡️" route="/orders/page/:page" params={{ page: n + 1 }} />}
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+createRouter({
+  "/orders": OrderList,             // page defaults to 1
+  "/orders/page/:page": OrderList,
+  "/orders/:id": OrderDetail,       // /orders/page/2 has three segments, so it never matches :id
+});
+```
+
+<TelegramPreview text="Orders, page 2 of 4" buttons={[["#1006 · $12.00"], ["#1007 · $8.50"], ["⬅️ Prev", "Next ➡️"]]} />
+
+### Back button
+
+The router has no history stack, so a back button links to the parent path explicitly:
+
+```tsx
+function OrderDetail() {
+  const { id } = useParams<"/orders/:id">();
+  return (
+    <Message text={`Order #${id}`}>
+      <InlineKeyboard>
+        <Button text="⬅️ Back to orders" route="/orders" />
       </InlineKeyboard>
     </Message>
   );
 }
 ```
 
-### Navigation modes
+If several screens can lead to the same page, pass the origin along, for example as a path
+segment (`/orders/:id/from/:origin`), or store it in the session before navigating.
 
-Pass `{ mode }` as the second argument to `navigate`:
+### Deep-link to an item
 
-- **`push`** — default; push a new entry onto the stack
-- **`replace`** — replace the current entry (no back step added)
-- **`stack`** — push onto the stack
-- **`dismiss`** — pop / go back one entry
+Combine a `start` resolver with a share button so users can forward a link straight to an item:
 
-You can also navigate declaratively from a button with `<Button route="/x"
-params={{ id }} />` — see [Components](/docs/guides/components).
+```tsx
+// router: "/" has command { name: "start", deepLink: ([p]) => p?.startsWith("order-") ? `/orders/${p.slice(6)}` : "/" }
 
-## Params
-
-`useParams()` gives typed access to dynamic segments. Pass either the path template or an explicit
-shape; without a type argument it returns `Record<string, string>`:
-
-```ts
-const { id } = useParams<"/pokemon/:id">();     // typed from the path template
-const { id: same } = useParams<{ id: string }>(); // explicit shape
+function OrderDetail() {
+  const { id } = useParams<"/orders/:id">();
+  const { botUsername } = useBot();
+  return (
+    <Message text={`Order #${id}`}>
+      <InlineKeyboard>
+        <Button text="🔗 Share" url={`https://t.me/${botUsername}?start=order-${id}`} />
+        <Button text="⬅️ Back" route="/orders" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
 ```
 
-## Matching & precedence
+## Gotchas
 
-- **Static beats param at equal depth** — `/pokemon/list` wins over
-  `/pokemon/:id`, so a literal `list` never gets captured as an `:id`.
-- **Trailing slashes match** — `/settings` and `/settings/` resolve to the same
-  route.
-- **Redirect loops fall back to `notFound`** — if guards bounce between paths
-  past the redirect limit, the engine stops and renders the 404 screen.
+<Callout type="info" title="Route buttons vs navigate">
+  A route button resets the chat's component tree, so local `useState` starts fresh on the new
+  screen. `navigate()` keeps the tree, but it runs inside an `onClick` handler, which lives in
+  process memory. Prefer route buttons for plain navigation and `navigate()` when you need the
+  mode option or navigate after some logic.
+</Callout>
 
-## Not found
+- `callback_data` is limited to 64 bytes by Telegram. A route button stores `__route:` plus the
+  path, so keep paths short.
+- A `/command` also resets the chat's component tree, just like a route button.
+- `setSession` updates the session object immediately, so a guard sees a value set earlier in the
+  same handler (for example `setSession({ auth })` followed by `navigate("/secret")`).
 
-Pass `notFound` in the second argument to `createRouter` for a custom 404
-screen. It is also the fallback whenever a guard throws or a redirect loop is
-detected.
+## Related
 
-## Do / Don't
-
-- **Do** keep `beforeLoad` synchronous — return `redirect()`, JSX, `reply()`, or
-  `undefined`.
-- **Do** rely on static-over-param precedence: put `/x/list` and `/x/:id` in the
-  same map and the literal wins.
-- **Don't** assume a thrown guard shows a partial page — it fails **closed** to
-  `notFound`.
-- **Don't** set both `component` and `router` on `createBot`; they are mutually
-  exclusive.
-- **Don't** create guard cycles — redirect loops fall through to `notFound`.
+<Cards>
+  <Card title="Commands" href="/docs/guides/commands" description="Handler commands, menu registration and deep links." />
+  <Card title="Components" href="/docs/guides/components" description="Buttons, keyboards and the edit-or-send rules." />
+  <Card title="Auth" href="/docs/guides/auth" description="Roles and token sessions to use in guards." />
+  <Card title="Hooks" href="/docs/guides/hooks" description="useNavigate, useParams, useRoute and the rest." />
+</Cards>

@@ -1,67 +1,248 @@
 ---
 title: Configuration
-description: teact.config.ts, defineConfig, plugins, sessions, and the serverless caveat.
+description: Every teact.config.ts field and createBot option with types and defaults, how the two are merged, bot.fetch options, environment variables, and why the config file is skipped on the edge.
 ---
 
-Teact splits configuration in two:
+Teact reads configuration from two places. `teact.config.ts` holds **infrastructure** settings: transport mode, webhook, session store, plugins and middleware. `createBot()` holds **your app**: the root component or router, commands and providers, and it accepts every infrastructure field too. Use the config file for settings that differ per deployment, and `createBot()` for everything else, or for everything when you deploy to the edge.
 
-- **`teact.config.ts`** — infrastructure and deployment settings (`mode`, `webhook`, `session`, `plugins`, `middleware`). Loaded automatically at startup.
-- **`createBot()`** — your app: `component`/`router`, `commands`, `providers`. Anything in `teact.config.ts` can also be passed to `createBot()`, where it is **merged** with (and overrides) the config file.
-
-## teact.config.ts
-
-Projects scaffolded with Teact include a root config file. Use `defineConfig` for full type-safety:
-
-```ts
-// teact.config.ts
+```ts title="teact.config.ts"
 import { defineConfig } from "@teactjs/core";
-import { storagePlugin } from "@teactjs/storage";
 
 export default defineConfig({
   mode: "polling",
-  plugins: [storagePlugin({ driver: "file", path: ".teact/storage.json" })],
+  session: { ttl: 30 * 60 * 1000 },
 });
 ```
 
-`TeactConfig` accepts only infrastructure fields:
+```tsx title="src/index.tsx"
+import { createBot, createRouter } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { Home } from "./pages/Home";
 
-| Field | Purpose |
-| ----- | ------- |
-| `mode` | `"polling"` (default) or `"webhook"` |
-| `webhook` | `{ domain, port?, path?, secretToken? }` — required when `mode: "webhook"` |
-| `session` | `{ store?, ttl? }` — override the session store or set a TTL |
-| `plugins` | `TeactPlugin[]` — `storagePlugin()`, `authPlugin()`, `conversationsPlugin()`, etc. |
-| `middleware` | `Middleware[]` — runs on every update |
+export const bot = createBot({
+  router: createRouter({ "/": Home }),
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: "file", path: ".teact/storage.json" })],
+  commands: { start: { description: "Start the bot", route: "/" } },
+});
 
-Commands and UI do **not** belong here — they live in `createBot()`.
+if (import.meta.main) bot.start();
+```
+
+## teact.config.ts
+
+`defineConfig` is an identity function that gives the object the `TeactConfig` type. The file is optional; projects scaffolded from the Starter and Showcase templates include one that sets `mode: 'polling'`.
+
+<TypeTable
+  type={{
+    mode: {
+      type: '"polling" | "webhook"',
+      description: 'How the bot receives updates when you call bot.start(). Ignored by bot.fetch().',
+      default: '"polling"',
+    },
+    webhook: {
+      type: 'WebhookConfig',
+      description: 'Webhook server settings. Needed for mode: "webhook"; without it, bot.start() falls back to polling.',
+    },
+    plugins: {
+      type: 'TeactPlugin[]',
+      description: 'Plugins loaded at startup, such as storagePlugin(), authPlugin() or conversationsPlugin().',
+      default: '[]',
+    },
+    middleware: {
+      type: 'Middleware[]',
+      description: 'Middleware run on every update, after plugin middleware and before createBot middleware.',
+      default: '[]',
+    },
+    session: {
+      type: '{ store?: SessionStore; ttl?: number }',
+      description: 'store replaces the default in-memory session store (createBot wins if both set one).',
+    },
+  }}
+/>
+
+Commands, the `component`/`router` and `providers` are not config fields: they belong in `createBot()`.
+
+### How the file is loaded
+
+- The engine looks in the **current working directory** for `teact.config.ts`, then `teact.config.js`, then `teact.config.mjs`, and imports the first one it finds. Run the bot from the project root.
+- It is loaded once, the first time the bot initializes: on `bot.start()`, `bot.setCommands()` or the first `bot.fetch()`.
+- On success the console shows `[teact] Loaded teact.config.ts`. If the import throws, Teact logs `[teact] Failed to load teact.config.ts:` with the error and **continues with no config**.
+- It is never loaded where there is no filesystem (Cloudflare Workers and other edge runtimes). See [the edge caveat](#the-edge-caveat).
+
+### WebhookConfig
+
+Used by `webhook` in either place. With `mode: "webhook"`, `bot.start()` calls `setWebhook` with `domain + path` and starts an HTTP server.
+
+<TypeTable
+  type={{
+    domain: {
+      type: 'string',
+      description: 'Public HTTPS origin, e.g. "https://my-bot.example.com". Trailing slashes are trimmed.',
+      required: true,
+    },
+    port: { type: 'number', description: 'Port the local HTTP server listens on.', default: '3000' },
+    path: { type: 'string', description: 'Path Telegram POSTs updates to.', default: '"/webhook"' },
+    secretToken: {
+      type: 'string',
+      description: 'Sent to Telegram as secret_token; requests whose X-Telegram-Bot-Api-Secret-Token header differs get a 401.',
+    },
+  }}
+/>
 
 ## createBot options
 
-`createBot()` takes everything the config file does, plus your app layer:
+`createBot(options)` returns the bot instance with `start()`, `stop()`, `fetch(request, options?)` and `setCommands()`.
 
-| Option | Purpose |
-| ------ | ------- |
-| `component` **or** `router` | Root UI — mutually exclusive |
-| `adapter` | e.g. `new TelegramAdapter()` |
-| `token` | Bot API token (falls back to `TELEGRAM_BOT_TOKEN`) |
-| `mode` | `"polling"` (default) or `"webhook"` — overrides config |
-| `webhook` | Webhook settings — overrides config |
-| `session` | `{ store?, ttl? }` |
-| `middleware` | Merged with config middleware |
-| `plugins` | Merged with config plugins. A plugin (same `name`) in both uses the `createBot()` copy; repeats within one list are all kept |
-| `commands` | Telegram `/command` map — routes or handlers |
-| `providers` | React context providers wrapping the tree |
-| `debug` | Verbose logging (every update, render, and error) |
+<TypeTable
+  type={{
+    adapter: {
+      type: 'Adapter',
+      description: 'The platform adapter, e.g. new TelegramAdapter(), or new MockAdapter() in tests.',
+      required: true,
+    },
+    component: {
+      type: 'FunctionComponent',
+      description: 'Root component for a single-screen bot. Provide this or router.',
+    },
+    router: {
+      type: 'RouterConfig',
+      description: 'The result of createRouter(routes, options?). Provide this or component; if both are set, router is used.',
+    },
+    token: {
+      type: 'string',
+      description: 'Bot API token. Falls back to process.env.TELEGRAM_BOT_TOKEN; bot.fetch(req, { token }) can supply it per request.',
+    },
+    commands: {
+      type: 'Record<string, CommandDef>',
+      description: 'Slash commands: { description, route?, handler?, deepLink? }. Merged over commands declared on router routes.',
+      default: '{}',
+    },
+    providers: {
+      type: 'FunctionComponent<{ children: ReactNode }>',
+      description: 'A component that wraps the whole tree, for React context providers (e.g. an i18n or query client provider).',
+    },
+    plugins: {
+      type: 'TeactPlugin[]',
+      description: 'Plugins, merged with teact.config.ts plugins. A plugin with the same name in both is used once: this copy.',
+      default: '[]',
+    },
+    middleware: {
+      type: 'Middleware[]',
+      description: 'Middleware, appended after teact.config.ts middleware.',
+      default: '[]',
+    },
+    session: {
+      type: '{ store?: SessionStore; ttl?: number }',
+      description: 'store overrides the config file store. ttl (milliseconds) sets the expiry of the default in-memory store.',
+      default: 'in-memory, 24 h TTL',
+    },
+    mode: {
+      type: '"polling" | "webhook"',
+      description: 'Overrides teact.config.ts mode for bot.start().',
+      default: '"polling"',
+    },
+    webhook: {
+      type: 'WebhookConfig',
+      description: 'Overrides teact.config.ts webhook.',
+    },
+    debug: {
+      type: 'boolean',
+      description: 'Logs every update, middleware run and render with timestamps, plus the resolved config at startup.',
+      default: 'false',
+    },
+    experimental: {
+      type: 'Record<string, unknown>',
+      description: 'Reserved for opt-in features. The current engine does not read it.',
+    },
+  }}
+/>
 
-See [core](/docs/packages/core) for the full list.
+`createBot` throws `Provide either \`component\` or \`router\` in createBot options.` when neither is set.
 
-## Webhook
+### CommandDef
 
-```ts
-const bot = createBot({
-  router,
-  adapter: new TelegramAdapter(),
-  token: process.env.TELEGRAM_BOT_TOKEN!,
+<TypeTable
+  type={{
+    description: { type: 'string', description: 'Shown in Telegram\'s command menu.', required: true },
+    route: { type: 'string', description: 'Route to open. Resets the chat\'s screen to this route.' },
+    handler: {
+      type: 'string | ((ctx: CommandContext) => void | Promise<void>)',
+      description: 'A string is sent as a reply; a function receives { args, reply, chatId, user, platform, raw }. Replaces the render step.',
+    },
+    deepLink: {
+      type: '(args: string[]) => string',
+      description: 'Maps arguments (e.g. /start poke-25) to a route. Used when args are present; otherwise route.',
+    },
+  }}
+/>
+
+A command with neither `handler` nor `route` resets and renders the root component (or the router's default route). See [Commands](/docs/guides/commands).
+
+### bot.fetch options
+
+On serverless you call `bot.fetch(request, options)` instead of `bot.start()`. `BotFetchOptions`:
+
+<TypeTable
+  type={{
+    token: {
+      type: 'string',
+      description: 'Bot token for this request, e.g. env.TELEGRAM_BOT_TOKEN. Falls back to createBot({ token }) / TELEGRAM_BOT_TOKEN.',
+    },
+    secretToken: {
+      type: 'string',
+      description: 'Webhook secret. A request whose X-Telegram-Bot-Api-Secret-Token header differs gets a 401 before any work is done.',
+    },
+    env: {
+      type: 'unknown',
+      description: 'Platform bindings (the Cloudflare Workers env). Read them anywhere with getEnv<Env>().',
+    },
+  }}
+/>
+
+`bot.fetch()` never registers the command menu. Call `bot.setCommands()` once after deploying; it resolves to the number of commands registered.
+
+## Precedence rules
+
+When the same setting appears in both places, `createBot()` wins. In detail:
+
+| Setting | Rule |
+| --- | --- |
+| `mode`, `webhook` | `createBot` value, else `teact.config.ts`, else `"polling"`. `mode: "webhook"` without a `webhook` object starts polling. |
+| `session.store` | `createBot` store, else the config file store, else a new in-memory store. |
+| `session.ttl` | Only `createBot({ session: { ttl } })` sets the default in-memory store's TTL (milliseconds, default 24 hours). A custom store manages its own expiry. |
+| `plugins` | Config plugins first, then `createBot` plugins. A plugin whose `name` is in **both** lists is used once, the `createBot` copy, and Teact warns: `Plugin "…" is in both teact.config.ts and createBot({ plugins }) — using the createBot() one.` Repeats **within one list** are all kept. |
+| `middleware` | All run, in this order: plugin middleware, config middleware, `createBot` middleware. |
+| `commands` | Commands declared on router routes (`command:`), then `createBot({ commands })`, which overrides a route command with the same name. |
+| `token` | `bot.fetch(req, { token })`, else `createBot({ token })`, else `TELEGRAM_BOT_TOKEN`. |
+
+Repeating a plugin in one list is how you layer limits:
+
+```ts title="src/index.tsx"
+import { rateLimit } from "@teactjs/plugins";
+
+createBot({
+  // ...
+  plugins: [
+    rateLimit({ key: "user", window: 1000, limit: 3 }),
+    rateLimit({ key: "chat", window: 60_000, limit: 60 }),
+  ],
+});
+```
+
+### Provider order
+
+The root element is wrapped from the inside out: your router or component, then each plugin's `Provider` in list order, then your `providers` component as the outermost layer. Your providers can therefore read from plugin contexts.
+
+## Recipes
+
+### Webhook server on your own host
+
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+
+export default defineConfig({
   mode: "webhook",
   webhook: {
     domain: "https://my-bot.example.com",
@@ -72,26 +253,70 @@ const bot = createBot({
 });
 ```
 
-## Serverless / edge caveat
+`bot.start()` sets the webhook and listens on port 3000. If the port is taken it fails with `Port 3000 is already in use.`
 
-On Cloudflare Workers, Vercel Edge, and Deno Deploy you handle updates with
-`bot.fetch(request, { token, secretToken, env })` instead of `bot.start()`. **The edge has no filesystem**, so:
+### Polling locally, webhook in production
 
-<Callout type="warn">
-  `teact.config.ts` is **not** loaded on the edge (loading it needs `fs`). Anything you put there —
-  especially `plugins` — is silently ignored. Pass those options directly to `createBot()` instead.
-</Callout>
+Keep the code the same and switch on an environment variable:
 
-- **Plugins:** move them out of `teact.config.ts` and into `createBot({ plugins: [...] })`.
-- **Session:** the default in-memory session store does **not** persist across the edge freeze. Use a durable session store from a database package — `d1SessionStore` / `kvSessionStore` ([`@teactjs/cloudflare`](/docs/packages/cloudflare)), `redisSessionStore` with Upstash ([`@teactjs/redis`](/docs/packages/redis)), or `postgresSessionStore` with Neon ([`@teactjs/postgres`](/docs/packages/postgres)).
-- **Storage:** the `'file'` driver can't write on the edge (it warns and degrades to memory). Pass the matching driver (`D1Driver`, `KVDriver`, `RedisDriver`, `PostgresDriver`) to `storagePlugin`.
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+
+const isProd = process.env.NODE_ENV === "production";
+
+export default defineConfig({
+  mode: isProd ? "webhook" : "polling",
+  webhook: isProd
+    ? { domain: process.env.PUBLIC_URL!, secretToken: process.env.WEBHOOK_SECRET }
+    : undefined,
+});
+```
+
+`teact dev` sets `NODE_ENV=development` unless you already set it. `PUBLIC_URL` here is your own variable, not one Teact reads.
+
+### A durable session store
+
+```ts title="teact.config.ts"
+import { defineConfig } from "@teactjs/core";
+import Redis from "ioredis";
+import { redisSessionStore } from "@teactjs/redis";
+
+export default defineConfig({
+  session: { store: redisSessionStore({ client: new Redis(process.env.REDIS_URL!) }) },
+});
+```
+
+Check [`@teactjs/redis`](/docs/packages/redis) for the store's full options, and [Databases](/docs/guides/databases) for the other backends.
+
+### Debugging a stuck bot
 
 ```ts
-// worker entry — config file is ignored here, so pass everything to createBot()
+createBot({ /* ... */ debug: true });
+```
+
+Every update, the middleware count, render and processing time are logged with an ISO timestamp, prefixed `[teact:debug …]`. At startup you also get the mode, command names, plugin names and middleware count.
+
+## The edge caveat
+
+On Cloudflare Workers, Vercel Edge and Deno Deploy you handle updates with `bot.fetch(request, { token, secretToken, env })` instead of `bot.start()`. **There is no filesystem on the edge**, so:
+
+<Callout type="warn">
+  `teact.config.ts` is **not** loaded on the edge (loading it needs `fs`). Anything you put there,
+  especially `plugins` and `session`, is silently ignored. Pass those options to `createBot()`
+  instead.
+</Callout>
+
+- **Plugins**: move them into `createBot({ plugins: [...] })`. Scaffolded projects already do this.
+- **Session**: the default in-memory store does not persist between requests. Teact logs a warning on the first `bot.fetch()` when it is in use. Use a durable store: `d1SessionStore` / `kvSessionStore` ([`@teactjs/cloudflare`](/docs/packages/cloudflare)), `redisSessionStore` with Upstash ([`@teactjs/redis`](/docs/packages/redis)), or `postgresSessionStore` with Neon ([`@teactjs/postgres`](/docs/packages/postgres)).
+- **Storage**: the `'file'` driver can't write on the edge (it warns and degrades to memory). Pass an edge-capable driver (`D1Driver`, `KVDriver`, `RedisDriver`, `PostgresDriver`) to `storagePlugin`.
+- **`.env`**: not read. Set `TELEGRAM_BOT_TOKEN` and `WEBHOOK_SECRET` as platform secrets and pass them to `bot.fetch()`.
+
+```ts title="src/worker.ts"
 import { createBot, getEnv } from "@teactjs/core";
 import { TelegramAdapter } from "@teactjs/telegram";
 import { storagePlugin } from "@teactjs/storage";
 import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+import { router } from "./router";
 
 interface Env {
   TELEGRAM_BOT_TOKEN: string;
@@ -112,24 +337,37 @@ export default {
 };
 ```
 
-`getEnv()` returns the `env` passed to the most recent `bot.fetch()`, so the lazy getters can reach
-your bindings. On serverless, also run `bot.setCommands()` once after deploying to register the
-command menu.
-
-Full walkthrough (bindings, durable stores, secrets) in [Deployment](/docs/guides/deployment); for
-choosing a database see [Databases](/docs/guides/databases).
+`getEnv()` returns the `env` passed to the most recent `bot.fetch()`, so lazy getters created at module scope can reach your bindings. It throws if called before the first `bot.fetch()` with an `env`. Full walkthrough in [Deployment](/docs/guides/deployment).
 
 ## Environment variables
 
-- `TELEGRAM_BOT_TOKEN` — required in polling/webhook; on the edge, pass it as `bot.fetch(req, { token })`.
-- `WEBHOOK_SECRET` — recommended when `mode: "webhook"` (validates incoming updates).
-- `PAYMENT_PROVIDER_TOKEN` — when using [Payments](/docs/guides/payments).
+| Variable | Read by | Notes |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | `createBot`, `teact doctor`, `teact webhook` | Required unless you pass `token`. Always this name. |
+| `WEBHOOK_SECRET` | `teact webhook set`, `teact doctor` | Not read by `createBot`: pass it as `webhook.secretToken` or `bot.fetch(req, { secretToken })`. `teact doctor` warns when it's missing in a webhook or Workers project. |
+| `PAYMENT_PROVIDER_TOKEN` | Your code (the scaffolded Store page) | Passed to `useInvoice({ providerToken })`. See [Payments](/docs/guides/payments). |
+| `REDIS_URL`, `DATABASE_URL` | Your code (scaffolded with `--db redis` / `--db postgres`) | Connection strings for the generated drivers. |
+| `NODE_ENV` | Set by `teact dev` | Defaults to `development` in dev. |
 
-On Bun/Node, a root `.env` is auto-loaded. On the edge, set these as platform secrets — `.env` is not read.
+How `.env` is loaded:
 
-## Do / Don't
+- **At runtime on Bun or Node**, `@teactjs/core` reads `.env` from the working directory when it is imported. It skips blank lines and `#` comments, strips surrounding quotes, and **never overrides** a variable that is already set.
+- **Under `teact dev`**, Bun also auto-loads `.env.development` and `.env.local` from the project root.
+- **The CLI commands** `teact doctor` and `teact webhook` check the process environment, then `.env.local`, then `.env`.
+- **On the edge** nothing is loaded; use platform secrets.
 
-- **Do** keep `mode`, `webhook`, `session`, `plugins`, and `middleware` in `teact.config.ts` for polling and long-running servers.
-- **Do** move `plugins` and a durable `session.store` into `createBot()` for edge deployments — the config file never runs there.
-- **Don't** rely on the in-memory session store or the `'file'` storage driver on the edge; they don't survive the freeze. Use an edge-capable database package instead.
-- **Don't** put `commands` or your `component`/`router` in `teact.config.ts` — they belong in `createBot()`.
+## Do and don't
+
+- **Do** keep `mode`, `webhook`, `session`, `plugins` and `middleware` in `teact.config.ts` for polling and long-running servers, if you want them separate from app code.
+- **Do** put `plugins` and a durable `session.store` in `createBot()` for edge deployments; the config file never runs there.
+- **Don't** list the same plugin in both places expecting two instances. The `createBot()` copy replaces the config one.
+- **Don't** put `commands` or your `component`/`router` in `teact.config.ts`; they belong in `createBot()`.
+
+## Related
+
+<Cards>
+  <Card title="Deployment" href="/docs/guides/deployment" description="Polling, webhook servers, and bot.fetch() on the edge." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="Write middleware, use halt(), and build plugins." />
+  <Card title="Storage" href="/docs/guides/storage" description="storagePlugin, useStorage and session stores." />
+  <Card title="@teactjs/core" href="/docs/packages/core" description="The full core API reference." />
+</Cards>

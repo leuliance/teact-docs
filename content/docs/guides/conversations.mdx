@@ -1,98 +1,451 @@
 ---
 title: Conversations
-description: useConversation, the declarative Conversation component, and grammY conversationsPlugin for imperative flows.
+description: Multi-step flows that ask questions and wait for answers — useConversation and the Conversation component for screens, defineConversation and conversationsPlugin for imperative async/await flows.
 ---
 
+A conversation asks the user something, waits for the answer, and moves to the next question.
+Teact has two ways to build one:
 
-Conversations collect answers one step at a time. Use the `useConversation` hook
-or the `<Conversation>` component for JSX-driven flows, or `defineConversation` +
-`conversationsPlugin()` for imperative async/await flows.
+- **`useConversation`** (and the `<Conversation>` component) from `@teactjs/core`. Steps are
+  rendered as a screen: each question is a message, answers come from text or buttons, and the
+  summary at the end is ordinary JSX with buttons to go back or edit.
+- **`defineConversation` + `conversationsPlugin()`** from `@teactjs/telegram`. An `async`
+  function that `await`s each answer, powered by grammY's conversations plugin. Good for long
+  scripted flows that send many messages and media.
 
-## Hook API
+For a fixed set of fields with validation, [`useForm`](/docs/guides/forms) is a thinner layer over
+the same engine.
 
-Each step is either a `prompt` (free-text, optional `validate`) or an `ask`
-(inline-keyboard choice). Validators return `true` to accept or an error string.
+## A first conversation
 
-```tsx
+```tsx title="src/screens/Onboarding.tsx"
 import { useConversation } from "@teactjs/core";
-import { Message } from "@teactjs/ui";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 
-function Onboarding() {
+export function Onboarding() {
   const conv = useConversation({
     name: {
-      prompt: "What's your name?",
-      validate: (v) => v.trim().length > 0 || "Name required",
+      prompt: "👋 What's your name?",
+      validate: (v) => v.trim().length >= 2 || "Please enter at least 2 characters",
     },
-    color: { ask: "Pick a color:", options: [["Red", "Blue"]] },
+    plan: {
+      ask: "Which plan do you want?",
+      options: [[{ text: "Free", value: "free" }, { text: "Pro ($5/mo)", value: "pro" }]],
+    },
   });
 
   return conv.render(() => (
-    <Message text={`Hi ${conv.data.name}, you picked ${conv.data.color}`} />
+    <Message text={`All set, ${conv.data.name}! You're on the ${conv.data.plan} plan.`}>
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button text="✏️ Change name" onClick={() => conv.goTo("name")} />
+          <Button text="🔄 Start over" onClick={() => conv.reset()} />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
   ));
 }
 ```
 
-`conv.render(onComplete)` renders the current step and calls `onComplete` when
-done. Read answers from `conv.data`; inspect `conv.current`, `conv.complete`,
-and `conv.lastError`; navigate with `conv.back()`, `conv.goTo(key)`, and
-`conv.reset()`.
+The user sees the first question, answers it, and the next question appears:
 
-## Declarative API
+<TelegramPreview user="/start" text="👋 What's your name?" />
+
+<TelegramPreview user="A" text={"⚠️ Please enter at least 2 characters\n\n👋 What's your name?"} caption="An invalid answer" />
+
+<TelegramPreview user="Ada" text="Which plan do you want?" buttons={[["Free", "Pro ($5/mo)"]]} caption="A valid answer" />
+
+<TelegramPreview edited text="All set, Ada! You're on the pro plan." buttons={[["✏️ Change name", "🔄 Start over"]]} caption="After tapping Pro" />
+
+## How it works
+
+- **Steps run in declaration order.** The current step is the first one without an answer.
+- **`prompt` steps wait for text.** The next text message the chat sends becomes the answer, after
+  validation. An invalid answer re-asks with `⚠️ <error>` above the question.
+- **`ask` steps wait for a button.** Each option is an inline button. If the user types instead of
+  tapping, the question is shown again with "Please pick an option from the buttons above."
+- **`render` steps are yours.** You render anything and call `done(value?)` to finish the step.
+- **`conv.render(onComplete)`** returns the current step's UI, or `onComplete()` once every step
+  has an answer.
+
+Messages follow the usual [edit-or-send rules](/docs/guides/components#edit-or-send): a question
+that follows a typed answer is sent as a new message, and a question that follows a button press
+edits the message with the buttons.
+
+<Callout type="warn" title="Where the answers live">
+  Answers are React state in the chat's component tree, held in the memory of the bot process. A
+  `/command` or a route button resets that tree and discards an unfinished conversation; so does a
+  restart. On serverless, where each update may hit a fresh instance, use a long-running process
+  for conversations, or store progress in `useSession` yourself.
+</Callout>
+
+## Step types
+
+<TypeTable
+  type={{
+    '{ prompt, validate? }': { type: 'StepDef', description: '`prompt: string` is the question. `validate?: Validator` checks the text answer.' },
+    '{ ask, options }': { type: 'StepDef', description: '`ask: string` is the question. `options: (string | { text, value })[][]` are button rows; a string is both label and value.' },
+    '{ render }': { type: 'StepDef', description: '`render: (done, actions) => ReactElement`. Call `done(value?)` to finish the step (the value defaults to "done"). `actions` has `back()`, `goTo(key)` and `canGoBack()`.' },
+  }}
+/>
+
+```tsx
+const conv = useConversation({
+  title: { prompt: "Ticket title?" },
+  urgency: { ask: "How urgent?", options: [["Low", "High"], [{ text: "🔥 Outage", value: "outage" }]] },
+  confirm: {
+    render: (done, { back }) => (
+      <Message text="Send this ticket?">
+        <InlineKeyboard>
+          <Button text="⬅️ Back" onClick={() => back()} />
+          <Button text="✅ Send" onClick={() => done("yes")} />
+        </InlineKeyboard>
+      </Message>
+    ),
+  },
+});
+```
+
+## Validation
+
+A `Validator` is either a function or a schema:
+
+- **Function**: `(value: string) => true | string`. Return `true` to accept, or the error message.
+- **Schema**: any object with `safeParse(value)`, such as a Zod schema. The first issue's message
+  is shown, or "Invalid input" when there is none.
+
+```tsx
+import { z } from "zod";
+
+useConversation({
+  email: { prompt: "Your email?", validate: z.email("That doesn't look like an email") },
+  age: {
+    prompt: "Your age?",
+    validate: (v) => (/^\d+$/.test(v) && Number(v) >= 13) || "You must be 13 or older",
+  },
+});
+```
+
+The current error is available as `conv.lastError` and is cleared on the next valid answer.
+
+## ConversationState reference
+
+`useConversation(steps)` returns:
+
+<TypeTable
+  type={{
+    render: { type: '(onComplete?: () => ReactElement) => ReactElement | null', description: 'The current step, or `onComplete()` when done. Without a callback it returns `null` when done.' },
+    data: { type: 'Readonly<Record<K, string>>', description: 'Answers collected so far.' },
+    current: { type: 'K | null', description: 'Key of the current step, or `null` when complete.' },
+    step: { type: 'number', description: 'Zero-based index of the current step (equals the step count when complete).' },
+    complete: { type: 'boolean', description: 'True when every declared step has an answer. Always false in imperative mode.' },
+    lastError: { type: 'string | null', description: 'The last validation error.' },
+    isWaiting: { type: 'boolean', description: 'True while a step is waiting for input.' },
+    has: { type: '(key) => boolean', description: 'Whether a step has an answer.' },
+    get: { type: '(key) => string | undefined', description: 'Read one answer.' },
+    set: { type: '(key, value) => void', description: 'Set an answer yourself (skips validation).' },
+    clear: { type: '(key) => void', description: 'Remove an answer so the step is asked again.' },
+    back: { type: '() => void', description: 'Clear the answer of the previous answered step, so it is asked again.' },
+    goTo: { type: '(key) => void', description: 'Clear that step’s answer and ask it again; then continue from the first unanswered step.' },
+    canGoBack: { type: '() => boolean', description: 'Whether there is a previous answered step.' },
+    reset: { type: '() => void', description: 'Clear every answer and start over.' },
+    prompt: { type: '(key, text) => ReactElement', description: 'Imperative mode: ask for text and wait for it.' },
+    ask: { type: '(key, text, options) => ReactElement', description: 'Imperative mode: ask with buttons.' },
+    waitFor: { type: '(key) => void', description: 'Imperative mode: wait for text without rendering a question.' },
+  }}
+/>
+
+### Imperative mode
+
+Call `useConversation()` without steps (optionally with `{ validate(key, value) }`) and drive the
+flow yourself with `has`, `prompt` and `ask`. This suits branching flows where the next question
+depends on earlier answers.
+
+```tsx title="src/screens/Delivery.tsx"
+export function Delivery() {
+  const conv = useConversation({
+    validate: (key, v) => (key === "zip" && !/^\d{5}$/.test(v) ? "Enter a 5-digit ZIP code" : true),
+  });
+
+  if (!conv.has("method")) {
+    return conv.ask("method", "Delivery or pickup?", [["🚚 Delivery", "🏬 Pickup"]]);
+  }
+  if (conv.get("method") === "🚚 Delivery" && !conv.has("zip")) {
+    return conv.prompt("zip", conv.lastError ? `⚠️ ${conv.lastError}\n\nYour ZIP code?` : "Your ZIP code?");
+  }
+
+  return <Message text={`Got it: ${conv.get("method")} ${conv.get("zip") ?? ""}`} />;
+}
+```
+
+In imperative mode `prompt` doesn't add the error line for you; read `lastError` as shown.
+
+## The Conversation component
+
+`<Conversation>` is the same engine in JSX form. Either pass a hook's state as `value`, or declare
+steps as children:
 
 ```tsx
 import { Conversation } from "@teactjs/core";
 import { Message } from "@teactjs/ui";
 
-<Conversation>
-  <Conversation.Prompt name="name" text="What's your name?" />
-  <Conversation.Ask name="color" text="Pick:" options={[["Red", "Blue"]]} />
-  <Conversation.Complete>
-    {(conv) => <Message text={`Hi ${conv.data.name}`} />}
-  </Conversation.Complete>
-</Conversation>;
+export function Survey() {
+  return (
+    <Conversation>
+      <Conversation.Prompt name="name" text="What's your name?" validate={(v) => v.length > 1 || "Too short"} />
+      <Conversation.Ask name="color" text="Pick a colour:" options={[["Red", "Blue"]]} />
+      <Conversation.Step name="confirm">
+        {(done) => (
+          <Message text="Ready?">
+            <InlineKeyboard>
+              <Button text="Yes" onClick={() => done()} />
+            </InlineKeyboard>
+          </Message>
+        )}
+      </Conversation.Step>
+      <Conversation.Complete>
+        {(conv) => <Message text={`${conv.data.name} likes ${conv.data.color}`} />}
+      </Conversation.Complete>
+    </Conversation>
+  );
+}
 ```
 
-## Imperative flows (grammY)
+| Child | Props | Becomes |
+| --- | --- | --- |
+| `Conversation.Prompt` | `name`, `text`, `validate?` | A `prompt` step |
+| `Conversation.Ask` | `name`, `text`, `options` | An `ask` step |
+| `Conversation.Step` | `name`, `children: (done, actions) => ReactElement` | A `render` step |
+| `Conversation.Complete` | `children`: a node, or `(conv) => ReactElement` | The completion screen (defaults to a "✓" message) |
 
-For async/await style flows outside JSX, register `conversationsPlugin()` from
-`@teactjs/telegram` and define named conversations:
+With the `value` prop (`<Conversation value={conv}>`), the steps come from your hook and only
+`Conversation.Complete` is read. Descendants can call `useConversationContext()` to reach the
+state.
 
-```ts
-import { conversationsPlugin, defineConversation } from "@teactjs/telegram";
-import { createBot } from "@teactjs/core";
+<Callout type="info">
+  The step list is read from the children on the first render. Adding or removing step children
+  later has no effect; use the hook with conditional logic for dynamic flows.
+</Callout>
 
-defineConversation("onboarding", async (convo) => {
-  const name = await convo.prompt("What's your name?");
-  await convo.send(`Welcome, ${name}!`);
+## Imperative conversations
+
+For scripted, linear flows you can write a plain `async` function. `@teactjs/telegram` wraps
+[grammY conversations](https://grammy.dev/plugins/conversations): each `await` pauses until the
+user answers.
+
+<Steps>
+<Step>
+### Define the conversation
+
+```tsx title="src/conversations/feedback.ts"
+import { defineConversation } from "@teactjs/telegram";
+
+export const feedback = defineConversation("feedback", {
+  command: "feedback",
+  async handler(conversation) {
+    const opinion = await conversation.prompt("💬 What do you think of this bot?", {
+      validate: (v) => v.length >= 5 || "Please write at least 5 characters",
+    });
+
+    const rating = await conversation.ask("Rate your experience:", [
+      [{ text: "⭐", value: "1" }, { text: "⭐⭐", value: "2" }, { text: "⭐⭐⭐", value: "3" }],
+    ]);
+
+    await conversation.send(`✅ Thanks!\n\n📝 "${opinion}"\n⭐ ${rating}/3`);
+  },
 });
+```
 
-const bot = createBot({
-  // ...
+`defineConversation(name, handlerOrDef)` registers the conversation globally and returns `name`.
+Pass either the handler function or `{ handler, command? }`.
+</Step>
+<Step>
+### Register the plugin
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter, conversationsPlugin } from "@teactjs/telegram";
+import "./conversations/feedback";
+
+export const bot = createBot({
+  adapter: new TelegramAdapter(),
+  router,
   plugins: [conversationsPlugin()],
 });
 ```
 
-Enter a named flow from a button with the `conversation` prop:
+Without the plugin, a conversation button logs a warning telling you to add it, and nothing else
+happens.
+</Step>
+<Step>
+### Start it
+
+From a button, with the `conversation` prop:
 
 ```tsx
-<Button text="Start" conversation="onboarding" />
+import { feedback } from "../conversations/feedback";
+
+<Button text="📝 Give feedback" conversation={feedback} />;
 ```
 
-<Callout type="info">
-  The `conversation` prop and imperative flows require `conversationsPlugin()` —
-  it drives the grammY conversation engine. Without it the button does nothing.
+Or from its `command` (`/feedback` above).
+</Step>
+</Steps>
+
+<TelegramPreview user="Great bot!" text="Rate your experience:" buttons={[["⭐", "⭐⭐", "⭐⭐⭐"]]} />
+
+### conversationsPlugin options
+
+`conversationsPlugin()` picks up every `defineConversation` call. You can also pass definitions
+directly, or a config object:
+
+```ts
+conversationsPlugin({
+  survey: async (conversation) => { /* … */ },
+  support: { command: "support", handler: async (conversation) => { /* … */ } },
+});
+
+conversationsPlugin({
+  conversations: { survey: async (conversation) => { /* … */ } },
+  exitActive: true,
+});
+```
+
+<TypeTable
+  type={{
+    conversations: { type: 'Record<string, ConversationHandler | ConversationDef>', description: 'Definitions, merged over the ones from defineConversation (same name wins here).' },
+    exitActive: { type: 'boolean', default: 'true', description: 'Exit any active conversation before entering a new one, instead of failing with "already in a conversation".' },
+  }}
+/>
+
+A conversation's `command` is intercepted by the plugin before Teact's middleware pipeline and is
+not added to the command menu. Declare it in `commands` or on a route as well if it should be
+listed.
+
+### Conversation API
+
+The `conversation` argument your handler receives:
+
+| Member | Description |
+| --- | --- |
+| `prompt(text, { validate? })` | Send `text` and wait for a text reply. Re-asks with `⚠️ <error>` until valid. Resolves to the text. |
+| `wait({ validate? })` | Wait for the next text message without sending anything. On invalid input it replies `⚠️ <error>` and keeps waiting. |
+| `ask(text, options)` | Send `text` with inline buttons (`string` or `{ text, value }`) and wait for a tap. Resolves to the value. |
+| `send(text)` | Send a message without waiting. |
+| `stream(source)` | Stream an `AsyncIterable<string>` into one live-updating message. See [Streaming](/docs/guides/streaming#streaming-inside-a-conversation). |
+| `requestContact(prompt, buttonText?)` | Show a one-time "Share Contact" keyboard (default label `📱 Share Contact`) and wait for the contact. Resolves to `{ phone_number, first_name, last_name?, user_id? }`. |
+| `requestLocation(prompt, buttonText?)` | Same for location (default `📍 Share Location`). Resolves to `{ latitude, longitude }`. |
+| `replyWithPhoto`, `replyWithVideo`, `replyWithAnimation`, `replyWithVoice`, `replyWithAudio`, `replyWithVideoNote`, `replyWithSticker`, `replyWithDocument` | Send media. Options use Telegram's snake_case names (`caption`, `parse_mode`, `has_spoiler`, …). |
+| `replyWithContact`, `replyWithLocation`, `replyWithVenue`, `replyWithMediaGroup`, `replyWithPoll` | Send contacts, places, albums and polls. `replyWithPoll` does not wait for votes. |
+| `chatId`, `chat`, `api` | The chat ID, the grammY chat object and the Bot API client. |
+| `raw` | `{ conversation, ctx }`: the underlying grammY objects. |
+
+After `requestContact` or `requestLocation` receives the answer, it sends a short `✓` message that
+removes the keyboard.
+
+<Callout type="warn" title="Long-running processes only">
+  Imperative conversations keep their progress in grammY's in-memory session. They need a bot that
+  stays running (`bot.start()` with polling or a webhook server). On serverless, every request may
+  land on a fresh instance with no memory of the conversation.
 </Callout>
 
-The `convo` object exposes `prompt`, `send`, `wait`, `ask`, `stream`, reply
-helpers, `requestContact`, `requestLocation`, and `api` / `raw` access.
+## Choosing an approach
 
-## Do / Don't
+| | `useConversation` / `<Conversation>` | `defineConversation` |
+| --- | --- | --- |
+| Package | `@teactjs/core` | `@teactjs/telegram` + plugin |
+| Style | Declarative steps, rendered as a screen | `async` function with `await` |
+| Back / edit answers | Built in (`back`, `goTo`, `reset`) | Write it yourself |
+| Summary with buttons, routes, hooks | Yes, it's a normal screen | Plain messages |
+| Sends many messages and media | One screen per step | Easy (`replyWith*`) |
+| Started by | Rendering the screen (route, command) | `conversation` button prop or its `command` |
 
-- **Do** return `conv.render(() => <Done />)` — it handles the current step and
-  completion for you.
-- **Do** register `conversationsPlugin()` before using `defineConversation` or the
-  `conversation` button prop.
-- **Don't** read `conv.data.field` before the step is answered — check
-  `conv.current` / `conv.complete` first.
-- **Don't** expect imperative conversations to run on serverless/edge — the
-  isolate freezes after the first commit (see [Streaming](/docs/guides/streaming)).
+## Recipes
+
+### Edit answers from the summary
+
+`goTo(key)` clears one answer; after it is answered again the flow returns to the summary, because
+every other answer is still set.
+
+```tsx
+return conv.render(() => (
+  <Message text={`Name: ${conv.data.name}\nPlan: ${conv.data.plan}`}>
+    <InlineKeyboard columns={2}>
+      <Button text="✏️ Name" onClick={() => conv.goTo("name")} />
+      <Button text="✏️ Plan" onClick={() => conv.goTo("plan")} />
+      {conv.canGoBack() && <Button text="⬅️ Back" onClick={() => conv.back()} />}
+      <Button text="✅ Confirm" route="/done" />
+    </InlineKeyboard>
+  </Message>
+));
+```
+
+### Cancel at any point
+
+A `prompt` step shows only a question, so offer cancellation with a command and on button steps:
+
+```tsx
+// /cancel resets the chat's tree (any command does) and opens the menu
+const commands = { cancel: { description: "Cancel the current flow", route: "/" } };
+
+// On an ask or render step, a route button does the same
+<Button text="✖️ Cancel" route="/" />;
+
+// Or stay on the screen and restart the flow
+<Button text="🔄 Start over" onClick={() => conv.reset()} />;
+```
+
+### Save the result when the flow completes
+
+Persist once, from a confirm button, rather than during render:
+
+```tsx
+import { useSession, useNavigate } from "@teactjs/core";
+
+const [, setSession] = useSession<{ profile?: Record<string, string> }>();
+const navigate = useNavigate();
+
+return conv.render(() => (
+  <Message text="Save your profile?">
+    <InlineKeyboard>
+      <Button
+        text="💾 Save"
+        onClick={() => {
+          setSession({ profile: { ...conv.data } });
+          navigate("/profile");
+        }}
+      />
+    </InlineKeyboard>
+  </Message>
+));
+```
+
+### Support ticket with a contact (imperative)
+
+```ts title="src/conversations/support.ts"
+import { defineConversation } from "@teactjs/telegram";
+import { createTicket } from "../api";
+
+export const support = defineConversation("support", async (conversation) => {
+  const topic = await conversation.ask("What do you need help with?", [
+    ["Billing", "Delivery"],
+    [{ text: "Something else", value: "other" }],
+  ]);
+  const details = await conversation.prompt("Describe the problem in a few words:", {
+    validate: (v) => v.length >= 10 || "Please add a little more detail",
+  });
+  const contact = await conversation.requestContact("Share your number so we can call you back:");
+
+  const id = await createTicket({ topic, details, phone: contact.phone_number });
+  await conversation.send(`🎫 Ticket ${id} created. We'll call ${contact.first_name} soon.`);
+});
+```
+
+## Related
+
+<Cards>
+  <Card title="Forms" href="/docs/guides/forms" description="Schema-driven field collection on the same engine." />
+  <Card title="Events" href="/docs/guides/events" description="Read contacts, locations and media the user sends." />
+  <Card title="Storage" href="/docs/guides/storage" description="Persist answers beyond the process." />
+  <Card title="@teactjs/telegram" href="/docs/packages/telegram" description="Plugin and adapter reference." />
+</Cards>

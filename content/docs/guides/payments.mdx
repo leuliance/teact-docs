@@ -1,47 +1,238 @@
 ---
 title: Payments
-description: useInvoice for Telegram native invoices — titles, prices, currency, and provider token.
+description: Sell inside Telegram with useInvoice — native invoices in any provider currency or Telegram Stars, the payment lifecycle, every invoice option, and how to record payments reliably.
 ---
 
+Telegram has native payments: the bot sends an **invoice**, Telegram shows a checkout sheet, and
+after the user pays, the bot receives a **successful payment** message. `useInvoice` from
+`@teactjs/core` sends the invoice for the current chat and tracks its status in the component.
 
-`useInvoice` from **`@teactjs/core`** sends Telegram native invoices and tracks
-the payment lifecycle for you.
+You can charge in two ways:
 
-```tsx
+- **Telegram Stars** (`currency: "XTR"`) for digital goods. No payment provider is needed.
+- **A payment provider** (Stripe, Chapa and others connected in @BotFather → Payments), in a
+  regular currency such as `USD` or `ETB`. You get a provider token from BotFather.
+
+## A first invoice
+
+```tsx title="src/screens/Store.tsx"
 import { useInvoice } from "@teactjs/core";
-import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { Message, Alert, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 
-function Checkout() {
-  const { send, status, receipt, error } = useInvoice({
-    title: "Premium",
-    description: "Monthly subscription",
+export function Store() {
+  const invoice = useInvoice({
+    title: "Premium Pokédex",
+    description: "Unlock all 151 Pokémon, stats and exclusive features",
+    payload: "premium-pokedex-v1",
+    providerToken: process.env.PAYMENT_PROVIDER_TOKEN ?? "",
     currency: "USD",
-    prices: [{ label: "Plan", amount: 999 }], // amount is in the smallest unit
-    providerToken: process.env.PAYMENT_PROVIDER_TOKEN!,
+    prices: [{ label: "Premium access", amount: 499 }], // $4.99 in cents
+    photoUrl: "https://example.com/premium.png",
+    needEmail: true,
+    sendEmailToProvider: true,
   });
 
-  if (status === "paid") return <Message text={`Thanks! Charge: ${receipt?.telegramPaymentChargeId}`} />;
-  if (error) return <Message text={`Payment failed: ${error.message}`} />;
+  if (invoice.status === "success") {
+    return (
+      <Message text={`✅ Payment received. Thank you!\nCharge ID: ${invoice.receipt?.telegramPaymentChargeId}`}>
+        <InlineKeyboard>
+          <Button text="🏠 Menu" route="/" />
+        </InlineKeyboard>
+      </Message>
+    );
+  }
+
+  if (invoice.status === "failed") {
+    return (
+      <>
+        <Alert variant="error" title="Payment failed">
+          {invoice.error ?? "Unknown error"}
+        </Alert>
+        <Message text="Check the payment configuration and try again.">
+          <InlineKeyboard>
+            <ButtonRow>
+              <Button text="🔄 Retry" onClick={invoice.send} />
+              <Button text="🏠 Menu" route="/" />
+            </ButtonRow>
+          </InlineKeyboard>
+        </Message>
+      </>
+    );
+  }
 
   return (
-    <Message text="Upgrade to Premium">
+    <Message text={`💎 Premium Pokédex — $4.99${invoice.status === "pending" ? "\n\n⏳ Invoice sent below." : ""}`}>
       <InlineKeyboard>
-        <Button text="Pay $9.99" onClick={() => send()} />
+        <Button text="💳 Buy Premium" onClick={invoice.send} />
       </InlineKeyboard>
     </Message>
   );
 }
 ```
 
-- `send()` — issue the invoice to the current chat.
-- `status` — the current payment state (`idle` → `pending` → `paid`, or failed).
-- `receipt` — the `SuccessfulPayment` once the charge completes.
-- `error` — set if the flow fails.
+<TelegramPreview bot="Pokédex Bot" text="💎 Premium Pokédex — $4.99" buttons={[["💳 Buy Premium"]]} />
 
-Prices use `LabeledPrice` (`{ label, amount }`) where `amount` is in the
-currency's smallest unit (e.g. cents), matching the Telegram Bot API.
+<TelegramPreview bot="Pokédex Bot" text={"✅ Payment received. Thank you!\nCharge ID: 6741…"} buttons={[["🏠 Menu"]]} caption="After paying" />
 
-Set **`PAYMENT_PROVIDER_TOKEN`** (or your template's env name) from your payment
-provider. `useInvoice` answers `pre_checkout_query` and resolves on
-`successful_payment` automatically. If you need custom server-side validation
-beyond that, hook into those updates via [Events](/docs/guides/events).
+## The payment lifecycle
+
+<Steps>
+<Step>
+### `send()` sends the invoice
+
+`status` becomes `"pending"` and the invoice appears in the chat as its own message, with
+Telegram's **Pay** button. If the call fails, `status` becomes `"failed"` and `error` holds the
+message.
+</Step>
+<Step>
+### The user pays
+
+Telegram shows its checkout sheet. Before charging, Telegram sends the bot a pre-checkout query;
+the Telegram adapter **approves it automatically**.
+</Step>
+<Step>
+### The payment arrives
+
+Telegram sends a message containing `successful_payment`. The current screen re-renders with it,
+and if its `invoice_payload` matches your `payload`, `status` becomes `"success"` and `receipt` is
+filled. Because it is an incoming message, the success screen is sent as a new message.
+</Step>
+</Steps>
+
+## InvoiceConfig reference
+
+<TypeTable
+  type={{
+    title: { type: 'string', required: true, description: 'Product name (Telegram allows 1–32 characters).' },
+    description: { type: 'string', required: true, description: 'Product description (1–255 characters).' },
+    payload: { type: 'string', required: true, description: 'Your own identifier, 1–128 bytes, never shown to the user. Also how the payment is matched back to this hook.' },
+    providerToken: { type: 'string', required: true, description: 'Token from @BotFather → Payments. May be empty for Telegram Stars (`currency: "XTR"`).' },
+    currency: { type: 'string', required: true, description: 'Three-letter ISO 4217 code, or "XTR" for Telegram Stars.' },
+    prices: { type: 'LabeledPrice[]', required: true, description: 'Price breakdown: `{ label, amount }`, with `amount` in the smallest unit (499 = $4.99).' },
+    photoUrl: { type: 'string', description: 'Product photo URL.' },
+    photoWidth: { type: 'number', description: 'Photo width in pixels.' },
+    photoHeight: { type: 'number', description: 'Photo height in pixels.' },
+    photoSize: { type: 'number', description: 'Photo size in bytes.' },
+    needName: { type: 'boolean', description: "Ask for the user's full name." },
+    needPhoneNumber: { type: 'boolean', description: "Ask for the user's phone number." },
+    needEmail: { type: 'boolean', description: "Ask for the user's email." },
+    needShippingAddress: { type: 'boolean', description: "Ask for the user's shipping address." },
+    sendPhoneNumberToProvider: { type: 'boolean', description: 'Pass the phone number to the provider.' },
+    sendEmailToProvider: { type: 'boolean', description: 'Pass the email to the provider.' },
+    isFlexible: { type: 'boolean', description: 'The final price depends on the shipping method.' },
+    maxTipAmount: { type: 'number', description: 'Maximum tip, in the smallest unit.' },
+    suggestedTipAmounts: { type: 'number[]', description: 'Up to 4 suggested tips, in the smallest unit.' },
+    startParameter: { type: 'string', description: 'Deep-link parameter for the invoice.' },
+    providerData: { type: 'string', description: 'JSON data for the payment provider.' },
+    protectContent: { type: 'boolean', description: 'Prevent forwarding and saving the invoice message.' },
+  }}
+/>
+
+## InvoiceResult reference
+
+<TypeTable
+  type={{
+    send: { type: '() => Promise<void>', description: 'Send the invoice to the current chat.' },
+    status: { type: "'idle' | 'pending' | 'success' | 'failed'", description: '`idle` until `send()`; `pending` once the invoice is sent; `success` after the matching payment; `failed` if sending failed.' },
+    receipt: { type: 'SuccessfulPayment | null', description: 'Set on success.' },
+    error: { type: 'string | null', description: 'Set when `status` is `failed`.' },
+  }}
+/>
+
+`SuccessfulPayment`:
+
+<TypeTable
+  type={{
+    currency: { type: 'string', description: 'Currency code.' },
+    totalAmount: { type: 'number', description: 'Total charged, in the smallest unit.' },
+    invoicePayload: { type: 'string', description: 'The `payload` you set.' },
+    telegramPaymentChargeId: { type: 'string', description: "Telegram's charge ID (keep it for refunds)." },
+    providerPaymentChargeId: { type: 'string', description: "The provider's charge ID." },
+    orderInfo: { type: 'any', description: 'Name, phone, email or address, if you asked for them.' },
+  }}
+/>
+
+## Telegram Stars
+
+For digital goods, charge in Stars. Set `currency: "XTR"`, leave `providerToken` empty, and give
+the amount in Stars:
+
+```tsx
+const invoice = useInvoice({
+  title: "100 coins",
+  description: "In-game coins",
+  payload: "coins-100",
+  providerToken: "",
+  currency: "XTR",
+  prices: [{ label: "100 coins", amount: 50 }], // 50 Stars
+});
+
+<Button text="⭐ Buy for 50 Stars" onClick={invoice.send} />;
+```
+
+With any other currency, an empty `providerToken` fails before calling Telegram, with
+`status: "failed"` and an error that tells you to get a token from @BotFather or use `"XTR"`.
+
+## Recipes
+
+### Record payments in middleware
+
+The hook only sees a payment while the screen that sent the invoice is mounted in the same
+process. To record every payment, even if the user navigated away or the bot restarted, handle
+`successful_payment` in a middleware too:
+
+```ts title="src/middleware/payments.ts"
+import type { Middleware } from "@teactjs/core";
+import { db } from "../db";
+
+export const recordPayments: Middleware = async (ctx) => {
+  const payment = ctx.raw?.message?.successful_payment;
+  if (!payment) return;
+
+  await db.payments.insert({
+    userId: ctx.userId,
+    payload: payment.invoice_payload,
+    amount: payment.total_amount,
+    currency: payment.currency,
+    telegramChargeId: payment.telegram_payment_charge_id,
+  });
+};
+
+// createBot({ middleware: [recordPayments], ... })
+```
+
+The update continues to the screen afterwards, so `useInvoice` still flips to `success`.
+
+### One payload per product
+
+`payload` is how a payment is matched to a hook. Use a distinct payload per product (and, if you
+need it, per order: `order-${orderId}`), so two invoices on one screen never confuse each other:
+
+```tsx
+const monthly = useInvoice({ ...base, payload: "pro-monthly", prices: [{ label: "Monthly", amount: 499 }] });
+const yearly = useInvoice({ ...base, payload: "pro-yearly", prices: [{ label: "Yearly", amount: 4999 }] });
+```
+
+## Gotchas
+
+<Callout type="warn" title="Pre-checkout is always approved">
+  The Telegram adapter answers every pre-checkout query with "OK" and doesn't forward it to your
+  components, so you can't reject a checkout (for example when stock ran out) from Teact. Validate
+  before calling `send()`, and refund through your provider if a charge can't be fulfilled.
+</Callout>
+
+- **Hook state is in memory.** `status` and `receipt` live in the component. A `/command`, a route
+  button, a restart or a fresh serverless instance loses them; the middleware recipe is the
+  reliable record.
+- **Amounts are integers** in the smallest unit: cents for USD, Stars for XTR.
+- **Test with a test provider.** BotFather offers test tokens for most providers, so you can run
+  the whole flow without real money.
+
+## Related
+
+<Cards>
+  <Card title="Events" href="/docs/guides/events" description="successful_payment and other message events." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="Record payments before rendering." />
+  <Card title="Router" href="/docs/guides/router#guards-beforeload" description="Guard premium routes." />
+  <Card title="Storage" href="/docs/guides/storage" description="Persist entitlements." />
+</Cards>

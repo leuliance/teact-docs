@@ -1,59 +1,198 @@
 ---
 title: UI components
-description: Message, keyboards, media, polls, and formatting from @teactjs/ui.
+description: Every component in @teactjs/ui — messages, inline and reply keyboards, media, locations, polls, notifications and text formatting — with props, examples and Telegram behaviour.
 ---
 
+`@teactjs/ui` holds the 36 components you build screens from. Each one renders to a Telegram
+Bot API call: `<Message>` becomes `sendMessage`, `<Photo>` becomes `sendPhoto`, `<Poll>` becomes
+`sendPoll`, and so on. Components are plain React function components, so you compose them with
+state, hooks and conditionals like any React UI.
 
-All components come from **`@teactjs/ui`**. They mirror Telegram Bot API fields,
-so a component tree renders to one (or more) Telegram messages.
+Engine pieces (hooks, router, `createBot`) live in `@teactjs/core`. This page only covers
+components.
 
-## Message
+## A first screen
 
-Text messages with an optional `parseMode` (`HTML`, `Markdown`, `MarkdownV2`).
-Children render an inline keyboard.
+```tsx title="src/screens/Welcome.tsx"
+import { useState, useBot } from "@teactjs/core";
+import { Message, Bold, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
 
-```tsx
-import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+export function Welcome() {
+  const { user } = useBot();
+  const [count, setCount] = useState(0);
 
-<Message text="Hello!" />;
-
-<Message text="Pick one">
-  <InlineKeyboard>
-    <Button text="A" onClick={() => {}} />
-  </InlineKeyboard>
-</Message>;
+  return (
+    <Message>
+      Hi <Bold>{user.firstName ?? "there"}</Bold>! You tapped {count} times.
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button text="-1" onClick={() => setCount((c) => c - 1)} />
+          <Button text="+1" variant="primary" onClick={() => setCount((c) => c + 1)} />
+        </ButtonRow>
+        <Button text="Settings" route="/settings" />
+        <Button text="Website" url="https://example.com" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
 ```
 
-<Callout type="warn">
-  Telegram clamps text to **4096** characters and captions to **1024**. Longer
-  strings are truncated for you.
-</Callout>
+<TelegramPreview
+  bot="Counter Bot"
+  user="/start"
+  text={"Hi Ada! You tapped 0 times."}
+  buttons={[["-1", "▸ +1"], ["Settings"], [{ text: "Website", url: "https://example.com" }]]}
+/>
 
-## Keyboards
+Tapping `+1` re-renders the component and Teact edits the same message in place.
 
-`<InlineKeyboard>` holds `<Button>` children. Row layout depends on how you nest
-them:
+## How a tree becomes a message
 
-- **A bare `<Button>` becomes its own row.**
-- **`<InlineKeyboard columns={n}>`** auto-grids bare buttons into `n`-column rows
-  — no `<ButtonRow>` needed.
-- **`<ButtonRow>`** groups buttons into one explicit row.
+### One render, one message
+
+A screen's whole render output becomes **one** Telegram API call. If you return several
+siblings in a fragment, Teact merges them into a single payload: text from every element is
+concatenated in order, and a media or poll element anywhere in the tree decides the send method.
 
 ```tsx
-// One button per row (bare):
+// Sends ONE message: "❌ Failed\nTimeout\nTry again?"
+<>
+  <Alert variant="error" title="Failed">Timeout</Alert>
+  <Message text="Try again?" />
+</>
+```
+
+Use fragments to compose text blocks (alerts, lists, dividers) into one message. To send several
+separate messages, use the media hooks (`useMedia`, `usePhoto`, …; see
+[Hooks](/docs/guides/hooks#media-senders)) or router navigation with `mode: "push"`.
+
+### Edit or send
+
+Teact tracks the last message it sent to each chat and decides per render whether to edit it or
+send a new one:
+
+| Situation | Result |
+| --- | --- |
+| The update is an incoming message (text, `/command`, shared contact, …) | New message |
+| A button press re-renders a text screen and the tracked message is text | Edit in place |
+| The new tree is media, a poll, a location, a contact or a venue | New message |
+| The tracked message is media and the new tree is text | New message (Telegram can't turn one into the other) |
+| The tree contains `<ReplyKeyboard>` or `<ReplyKeyboardRemove>` | New message |
+| `navigate(path, { mode })` with `push`, `stack` or `dismiss` | See [navigation modes](/docs/guides/router#navigation-modes) |
+
+An edit replaces the text and the inline keyboard together. If the new tree has no
+`<InlineKeyboard>`, the edit removes the old buttons. Telegram's "message is not modified" error
+is ignored, so re-rendering identical output is harmless.
+
+After a restart, or on a fresh serverless instance, Teact has no tracked message. A button press
+then edits the message the button lives on instead of sending a duplicate.
+
+### Telegram limits
+
+| Limit | Teact behaviour |
+| --- | --- |
+| Message text: 4096 characters | Truncated to 4095 characters plus `…`, with a console warning |
+| Caption (any media): 1024 characters | Truncated the same way |
+| `<MediaGroup>`: 2–10 items | 1 item is sent as a plain photo/video; more than 10 are dropped with a warning; 0 sends nothing |
+| `<Poll>`: at least 2 options | Warning; Telegram rejects the poll |
+| `<Poll.Quiz>`: valid `correctOptionId` | Warning when missing or out of range |
+| A `<Message>` with buttons but no text | Not sent; Telegram needs text to attach a keyboard. A warning explains why |
+
+Lengths are counted on the final string, including the HTML tags that formatting components
+generate.
+
+## Messages & text
+
+### Message
+
+Sends a text message. Text can come from the `text` prop, from children, or both (the prop comes
+first). Children can also hold formatting components and one keyboard.
+
+<TypeTable
+  type={{
+    text: { type: 'string', description: 'Message text. Rendered before any children.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Telegram parse mode. When set, `text` is sent verbatim and you are responsible for escaping it. Formatting components set HTML automatically when this is omitted.' },
+    disablePreview: { type: 'boolean', description: 'Disable the link preview for URLs in the text.' },
+    children: { type: 'ReactNode', description: 'Text, formatting components, an `<InlineKeyboard>` or a `<ReplyKeyboard>`.' },
+  }}
+/>
+
+```tsx title="src/screens/Order.tsx"
+import { Message, Bold, Code } from "@teactjs/ui";
+
+export function Order({ id, total }: { id: string; total: string }) {
+  return (
+    <Message disablePreview>
+      Order <Code>{id}</Code> confirmed.{"\n"}
+      Total: <Bold>{total}</Bold>{"\n"}
+      Track it at https://example.com/orders
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text={"Order A-1042 confirmed.\nTotal: $24.00\nTrack it at https://example.com/orders"} />
+
+<Callout type="tip" title="Line breaks">
+  JSX collapses whitespace between lines. Write `{"\n"}` where you want a line break, or build the
+  string in JavaScript and pass it as `text`.
+</Callout>
+
+### SuspenseFallback
+
+A ready-made loading message for `<Suspense>` boundaries. It renders a `<Message>` with its text.
+
+<TypeTable
+  type={{
+    text: { type: 'string', description: 'Loading text.', default: '"⏳ Loading..."' },
+  }}
+/>
+
+```tsx
+import { Suspense } from "@teactjs/core";
+import { SuspenseFallback } from "@teactjs/ui";
+
+<Suspense fallback={<SuspenseFallback text="Fetching your profile…" />}>
+  <Profile />
+</Suspense>;
+```
+
+Teact already wraps every screen in a `<Suspense>` with a default loading message. Add your own
+boundary when you want different text. For render errors, wrap a subtree in `<ErrorBoundary>`
+(re-exported from `@teactjs/core`), which takes `fallback` (a node, or
+`(error, retry) => node`) and `onError`.
+
+## Buttons & keyboards
+
+### InlineKeyboard
+
+The container for inline buttons, attached under a message. Put it inside `<Message>` or inside a
+media component such as `<Photo>`.
+
+<TypeTable
+  type={{
+    columns: { type: 'number', description: 'Arrange direct children into rows of this many buttons. Without it, each bare `<Button>` is its own row.' },
+    children: { type: 'ReactNode', description: '`<Button>`, `<Button.WebApp>` and `<ButtonRow>` elements.' },
+  }}
+/>
+
+There are three ways to lay buttons out:
+
+```tsx
+// 1. A bare <Button> is its own row
 <InlineKeyboard>
   <Button text="Top" onClick={onTop} />
   <Button text="Bottom" onClick={onBottom} />
 </InlineKeyboard>
 
-// Auto 2-column grid:
+// 2. columns={n} builds an n-column grid
 <InlineKeyboard columns={2}>
-  <Button text="A" route="/a" />
-  <Button text="B" route="/b" />
-  <Button text="C" route="/c" />
+  <Button text="Kanto" route="/region/kanto" />
+  <Button text="Johto" route="/region/johto" />
+  <Button text="Hoenn" route="/region/hoenn" />
 </InlineKeyboard>
 
-// Explicit rows:
+// 3. <ButtonRow> for explicit rows
 <InlineKeyboard>
   <ButtonRow>
     <Button text="Yes" onClick={onYes} />
@@ -62,91 +201,735 @@ them:
 </InlineKeyboard>
 ```
 
-### Button variants
+<TelegramPreview caption="Layout 2 renders as" text="Pick a region:" buttons={[["Kanto", "Johto"], ["Hoenn"]]} />
+
+### ButtonRow
+
+One explicit row of buttons. Also available as `InlineKeyboard.Row` and `Button.Row`. It throws
+if it is not inside an `<InlineKeyboard>`.
+
+<TypeTable type={{ children: { type: 'ReactNode', description: 'The buttons in this row.' } }} />
+
+### Button
+
+An inline button. It throws if it is not inside an `<InlineKeyboard>`. Also available as
+`InlineKeyboard.Button`.
+
+<TypeTable
+  type={{
+    text: { type: 'string', required: true, description: 'Button label.' },
+    url: { type: 'string', description: 'Open this URL when tapped. No callback is sent.' },
+    route: { type: 'string', description: 'Navigate to this route when tapped. `:param` segments are filled from `params`.' },
+    params: { type: 'Record<string, string | number>', description: 'Values for `:param` segments in `route`.' },
+    conversation: { type: 'string', description: 'Enter the named conversation registered with `conversationsPlugin` (from `@teactjs/telegram`).' },
+    onClick: { type: 'string | (() => void)', description: 'A function to run on tap, or a raw `callback_data` string.' },
+    variant: { type: "'default' | 'primary' | 'destructive' | 'outline'", default: "'default'", description: 'Adds a text prefix to the label.' },
+  }}
+/>
+
+#### Action precedence
+
+A button carries exactly one action. When you pass several props, the first match in this order
+wins:
+
+1. **`url`**: a link button. No callback data.
+2. **`route`** (+ `params`): navigates to the route. The path is encoded in the callback data, so
+   it works after a restart and on any serverless instance.
+3. **`conversation`**: enters a named imperative conversation.
+4. **`onClick` function**: runs the function in the process that rendered the button.
+5. **`onClick` string**: sent as raw `callback_data`. Read it with `useCallbackData()`.
+6. **None of the above**: the label itself is sent as `callback_data`.
 
 ```tsx
-<Button text="Open" route="/pokemon/:id" params={{ id: "25" }} /> {/* navigate */}
-<Button text="Run" onClick={() => {}} />                          {/* handler */}
-<Button text="Docs" url="https://example.com" />                  {/* open URL */}
-<WebAppButton text="Launch app" url="https://myapp.example" />    {/* Web App */}
+<Button text="Docs" url="https://example.com/docs" />          {/* opens a link */}
+<Button text="Open #25" route="/pokemon/:id" params={{ id: 25 }} /> {/* navigates to /pokemon/25 */}
+<Button text="Feedback" conversation="feedback" />             {/* enters a conversation */}
+<Button text="Like" onClick={() => setLiked(true)} />          {/* runs a handler */}
+<Button text="Delete" onClick="delete:25" />                   {/* raw callback_data */}
 ```
 
-- `route` + `params` — declarative navigation (fills `:param` segments).
-- `onClick` — a callback (or a raw `callback_data` string).
-- `url` — opens a link, no callback.
-- `<WebAppButton>` — opens a Telegram Web App.
+<Callout type="warn" title="onClick lives in memory">
+  Function handlers are stored in the memory of the process that rendered the message. After a
+  restart, or when a press lands on a fresh serverless instance, the handler is gone: Teact logs a
+  warning and renders the bot again from its starting state (in a router app, the default route),
+  editing the pressed message. Use `route` buttons (and keep state in `useSession` or `useStorage`)
+  for buttons that must keep working.
+</Callout>
 
-Reply (custom) keyboards use `<ReplyKeyboard>` with `<ReplyRow>`,
-`<ReplyButton>`, `<RequestContactButton>`, and `<RequestLocationButton>`;
-`<ReplyKeyboardRemove>` clears the custom keyboard.
+#### Variants
+
+`variant` prefixes the label. Telegram has no button colours, so this is a text hint only.
+
+| Variant | Label |
+| --- | --- |
+| `default` | `Save` |
+| `primary` | `▸ Save` |
+| `destructive` | `✕ Save` |
+| `outline` | `◦ Save` |
+
+### WebAppButton
+
+Opens a Telegram Mini App. Use it as `<Button.WebApp>` or import `WebAppButton`. Must be inside an
+`<InlineKeyboard>`.
+
+<TypeTable
+  type={{
+    text: { type: 'string', required: true, description: 'Button label.' },
+    url: { type: 'string', required: true, description: 'HTTPS URL of the Mini App.' },
+    variant: { type: "'default' | 'primary' | 'destructive' | 'outline'", default: "'default'", description: 'Label prefix, as on `<Button>`.' },
+  }}
+/>
+
+```tsx
+<InlineKeyboard>
+  <Button.WebApp text="Open store" url="https://shop.example.com/app" />
+</InlineKeyboard>
+```
+
+### ReplyKeyboard
+
+A custom keyboard that replaces the phone keyboard under the input field. Tapping a button sends
+its text as a normal message, which you read with `useText()`.
+
+<TypeTable
+  type={{
+    resizeKeyboard: { type: 'boolean', default: 'true', description: 'Shrink the keyboard to fit its buttons.' },
+    oneTimeKeyboard: { type: 'boolean', description: 'Hide the keyboard after one tap.' },
+    placeholder: { type: 'string', description: 'Placeholder shown in the input field while the keyboard is open.' },
+    isPersistent: { type: 'boolean', description: 'Keep the keyboard visible even when the user hides it.' },
+    children: { type: 'ReactNode', description: 'Rows and reply buttons.' },
+  }}
+/>
+
+The building blocks, all of which throw outside a `<ReplyKeyboard>`:
+
+| Component | Alias | Props | Sends |
+| --- | --- | --- | --- |
+| `ReplyRow` | `ReplyKeyboard.Row` | `children` | One row of buttons |
+| `ReplyButton` | `ReplyKeyboard.Button` | `text: string` | The button text as a message |
+| `RequestContactButton` | `ReplyKeyboard.RequestContact` | `text: string` | The user's phone contact (after they confirm) |
+| `RequestLocationButton` | `ReplyKeyboard.RequestLocation` | `text: string` | The user's current location |
+
+A bare reply button outside a `ReplyRow` becomes its own row.
+
+```tsx title="src/screens/MainMenu.tsx"
+import { useText } from "@teactjs/core";
+import { Message, ReplyKeyboard } from "@teactjs/ui";
+
+export function MainMenu() {
+  const text = useText();
+  const reply = text === "Help" ? "Send /start to begin." : "Choose an option below.";
+
+  return (
+    <Message text={reply}>
+      <ReplyKeyboard placeholder="Choose…">
+        <ReplyKeyboard.Row>
+          <ReplyKeyboard.Button text="Orders" />
+          <ReplyKeyboard.Button text="Help" />
+        </ReplyKeyboard.Row>
+        <ReplyKeyboard.RequestLocation text="📍 Send my location" />
+      </ReplyKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text="Choose an option below." replyKeyboard={[["Orders", "Help"], ["📍 Send my location"]]} />
+
+### ReplyKeyboardRemove
+
+Removes the active reply keyboard from the chat. It takes no props. Put it in the next message you
+send after you no longer need the keyboard.
+
+```tsx
+<Message text="Thanks, got your contact.">
+  <ReplyKeyboardRemove />
+</Message>
+```
+
+<Callout type="warn" title="One keyboard per message">
+  Telegram allows one `reply_markup` per message. When a tree contains several, Teact uses
+  `<ReplyKeyboardRemove>` first, then `<ReplyKeyboard>`, then `<InlineKeyboard>`; the others are
+  dropped. To remove a reply keyboard and show inline buttons, send them as two messages.
+</Callout>
 
 ## Media
 
-Single-item components: `Photo`, `Video`, `Animation`, `Voice`, `Audio`,
-`VideoNote`, `Sticker`, `Document`. Location/contact: `Contact`, `Location`,
-`LiveLocation`, `Venue`.
+All media components take `src`: an HTTPS URL or a Telegram `file_id` you received earlier.
+Components with `children` accept formatting components (rendered into the caption) and an
+`<InlineKeyboard>`.
 
-Albums use `<MediaGroup>` with `<MediaPhoto>` / `<MediaVideo>`:
+The `caption` prop is plain text. To format a caption, put `<Bold>`, `<Italic>` or `<Code>`
+children inside the media element instead; they switch the caption to HTML and are appended after
+`caption`.
 
-```tsx
-import { MediaGroup, MediaPhoto, MediaVideo } from "@teactjs/ui";
+```tsx title="src/screens/PokemonCard.tsx"
+import { useParams } from "@teactjs/core";
+import { Photo, Bold, InlineKeyboard, Button } from "@teactjs/ui";
 
-<MediaGroup>
-  <MediaPhoto src="a.jpg" />
-  <MediaPhoto src="b.jpg" />
-  <MediaVideo src="c.mp4" />
-</MediaGroup>;
+export function PokemonCard() {
+  const { id } = useParams<"/pokemon/:id">();
+  const art = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+
+  return (
+    <Photo src={art} caption={`#${id} `}>
+      <Bold>Pikachu</Bold>
+      <InlineKeyboard columns={2}>
+        <Button text="Comments" route="/pokemon/:id/comments" params={{ id }} />
+        <Button text="Back" route="/list" />
+      </InlineKeyboard>
+    </Photo>
+  );
+}
 ```
 
-<Callout type="warn">
-  A media group must contain **2–10** items. A single item is sent as a normal
-  media message instead.
+<TelegramPreview text={"[photo]\n#25 Pikachu"} buttons={[["Comments", "Back"]]} />
+
+### Photo
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Photo URL or file_id.' },
+    caption: { type: 'string', description: 'Plain-text caption (max 1024 characters).' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Caption parse mode.' },
+    hasSpoiler: { type: 'boolean', description: 'Blur the photo until tapped.' },
+    children: { type: 'ReactNode', description: 'Formatting (appended to the caption) and an `<InlineKeyboard>`.' },
+  }}
+/>
+
+### Video
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Video URL or file_id.' },
+    caption: { type: 'string', description: 'Plain-text caption.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Caption parse mode.' },
+    width: { type: 'number', description: 'Video width.' },
+    height: { type: 'number', description: 'Video height.' },
+    duration: { type: 'number', description: 'Duration in seconds.' },
+    supportsStreaming: { type: 'boolean', description: 'The video can be played while it downloads.' },
+    hasSpoiler: { type: 'boolean', description: 'Blur the video until tapped.' },
+    children: { type: 'ReactNode', description: 'Caption formatting and an `<InlineKeyboard>`.' },
+  }}
+/>
+
+```tsx
+<Video src="https://example.com/trailer.mp4" caption="Season 2 trailer" supportsStreaming />
+```
+
+### Animation
+
+A GIF or silent MP4 animation.
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Animation URL or file_id.' },
+    caption: { type: 'string', description: 'Plain-text caption.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Caption parse mode.' },
+    width: { type: 'number', description: 'Width.' },
+    height: { type: 'number', description: 'Height.' },
+    duration: { type: 'number', description: 'Duration in seconds.' },
+    hasSpoiler: { type: 'boolean', description: 'Blur until tapped.' },
+    children: { type: 'ReactNode', description: 'Caption formatting and an `<InlineKeyboard>`.' },
+  }}
+/>
+
+### Voice
+
+A voice note. Telegram expects OGG encoded with OPUS.
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Voice file URL or file_id.' },
+    caption: { type: 'string', description: 'Plain-text caption.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Caption parse mode.' },
+    duration: { type: 'number', description: 'Duration in seconds.' },
+    children: { type: 'ReactNode', description: 'Caption formatting and an `<InlineKeyboard>`.' },
+  }}
+/>
+
+### Audio
+
+A music file, shown with Telegram's player.
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Audio URL or file_id.' },
+    caption: { type: 'string', description: 'Plain-text caption.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Caption parse mode.' },
+    performer: { type: 'string', description: 'Performer shown in the player.' },
+    title: { type: 'string', description: 'Track title shown in the player.' },
+    duration: { type: 'number', description: 'Duration in seconds.' },
+    children: { type: 'ReactNode', description: 'Caption formatting and an `<InlineKeyboard>`.' },
+  }}
+/>
+
+```tsx
+<Audio src="https://example.com/ep12.mp3" performer="Teact FM" title="Episode 12" />
+```
+
+### VideoNote
+
+A round video message. No caption and no keyboard.
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Video note URL or file_id.' },
+    duration: { type: 'number', description: 'Duration in seconds.' },
+    length: { type: 'number', description: 'Diameter of the video in pixels.' },
+  }}
+/>
+
+### Sticker
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Sticker file_id or URL.' },
+    emoji: { type: 'string', description: 'Emoji associated with the sticker.' },
+  }}
+/>
+
+### Document
+
+Any file. Use `filename` to control the name the user sees.
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'File URL or file_id.' },
+    caption: { type: 'string', description: 'Plain-text caption.' },
+    filename: { type: 'string', description: 'File name shown to the user.' },
+    children: { type: 'ReactNode', description: 'Caption formatting and an `<InlineKeyboard>`.' },
+  }}
+/>
+
+```tsx
+<Document src="https://example.com/invoices/1042.pdf" filename="invoice-1042.pdf" caption="Your invoice" />
+```
+
+### MediaGroup, MediaPhoto, MediaVideo
+
+An album of 2–10 photos and videos sent as one grouped message. Items are `<MediaGroup.Photo>`
+(`MediaPhoto`) and `<MediaGroup.Video>` (`MediaVideo`); both throw outside a `<MediaGroup>`.
+`MediaGroup` itself only takes `children`.
+
+```tsx
+<MediaGroup>
+  <MediaGroup.Photo src="https://example.com/front.jpg" caption="Front" />
+  <MediaGroup.Photo src="https://example.com/back.jpg" caption="Back" />
+  <MediaGroup.Video src="https://example.com/spin.mp4" supportsStreaming />
+</MediaGroup>
+```
+
+`MediaPhoto` props:
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Photo URL or file_id.' },
+    caption: { type: 'string', description: 'Caption for this item.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Parse mode for this caption.' },
+    hasSpoiler: { type: 'boolean', description: 'Blur until tapped.' },
+  }}
+/>
+
+`MediaVideo` props:
+
+<TypeTable
+  type={{
+    src: { type: 'string', required: true, description: 'Video URL or file_id.' },
+    caption: { type: 'string', description: 'Caption for this item.' },
+    parseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Parse mode for this caption.' },
+    width: { type: 'number', description: 'Width.' },
+    height: { type: 'number', description: 'Height.' },
+    duration: { type: 'number', description: 'Duration in seconds.' },
+    supportsStreaming: { type: 'boolean', description: 'Playable while downloading.' },
+    hasSpoiler: { type: 'boolean', description: 'Blur until tapped.' },
+  }}
+/>
+
+<Callout type="info">
+  Telegram does not attach keyboards to albums. Put buttons in a separate screen or message.
 </Callout>
 
-## Polls
+## Location & contacts
+
+These components send one item each and take no children, so they cannot carry an inline
+keyboard.
+
+### Contact
+
+<TypeTable
+  type={{
+    phoneNumber: { type: 'string', required: true, description: 'Phone number.' },
+    firstName: { type: 'string', required: true, description: 'First name.' },
+    lastName: { type: 'string', description: 'Last name.' },
+    vcard: { type: 'string', description: 'Extra data as a vCard (0–2048 bytes).' },
+  }}
+/>
 
 ```tsx
-import { Poll } from "@teactjs/ui";
-
-<Poll question="Favorite?" options={["A", "B"]} />
-<Poll.Quiz question="2+2?" options={["3", "4", "5"]} correctOptionId={1} />
+<Contact phoneNumber="+15550100" firstName="Support" lastName="Desk" />
 ```
+
+### Location
+
+A static map pin.
+
+<TypeTable
+  type={{
+    latitude: { type: 'number', required: true, description: 'Latitude.' },
+    longitude: { type: 'number', required: true, description: 'Longitude.' },
+    horizontalAccuracy: { type: 'number', description: 'Accuracy radius in metres.' },
+  }}
+/>
+
+### LiveLocation
+
+A location that can be updated for `livePeriod` seconds. Use it as `<Location.Live>`.
+
+<TypeTable
+  type={{
+    latitude: { type: 'number', required: true, description: 'Latitude.' },
+    longitude: { type: 'number', required: true, description: 'Longitude.' },
+    livePeriod: { type: 'number', required: true, description: 'How long the location stays live, in seconds.' },
+    horizontalAccuracy: { type: 'number', description: 'Accuracy radius in metres.' },
+    heading: { type: 'number', description: 'Direction of movement in degrees (1–360).' },
+    proximityAlertRadius: { type: 'number', description: 'Distance in metres for proximity alerts.' },
+  }}
+/>
+
+```tsx
+<Location.Live latitude={9.0192} longitude={38.7525} livePeriod={900} heading={90} />
+```
+
+### Venue
+
+A location with a name and address. Use it as `<Location.Venue>`.
+
+<TypeTable
+  type={{
+    latitude: { type: 'number', required: true, description: 'Latitude.' },
+    longitude: { type: 'number', required: true, description: 'Longitude.' },
+    title: { type: 'string', required: true, description: 'Venue name.' },
+    address: { type: 'string', required: true, description: 'Venue address.' },
+    foursquareId: { type: 'string', description: 'Foursquare identifier.' },
+    foursquareType: { type: 'string', description: 'Foursquare type.' },
+    googlePlaceId: { type: 'string', description: 'Google Places identifier.' },
+    googlePlaceType: { type: 'string', description: 'Google Places type.' },
+  }}
+/>
+
+```tsx
+<Location.Venue latitude={35.6762} longitude={139.6503} title="Pokémon Center Tokyo" address="Nihonbashi, Chuo City" />
+```
+
+To receive a location or contact from the user, see
+[Events](/docs/guides/events#read-a-shared-contact) and the request buttons above.
+
+## Polls & notifications
+
+### Poll
+
+Sends a native poll. Use `<Poll.Quiz>` for a quiz with one correct answer; it sets `type: 'quiz'`
+and requires `correctOptionId`.
+
+<TypeTable
+  type={{
+    question: { type: 'string', required: true, description: 'Poll question.' },
+    options: { type: 'string[]', required: true, description: 'Answer options (at least 2).' },
+    isAnonymous: { type: 'boolean', description: 'Whether votes are anonymous. Telegram defaults to true.' },
+    type: { type: "'regular' | 'quiz'", description: 'Poll type. `<Poll.Quiz>` sets this for you.' },
+    allowsMultipleAnswers: { type: 'boolean', description: 'Allow several answers (regular polls).' },
+    correctOptionId: { type: 'number', description: 'Zero-based index of the correct option (quiz).' },
+    explanation: { type: 'string', description: 'Shown after a wrong quiz answer.' },
+    explanationParseMode: { type: "'HTML' | 'Markdown' | 'MarkdownV2'", description: 'Parse mode for `explanation`.' },
+    openPeriod: { type: 'number', description: 'Seconds the poll stays open.' },
+    isClosed: { type: 'boolean', description: 'Send the poll already closed.' },
+  }}
+/>
+
+```tsx
+<Poll question="Next feature?" options={["Dark mode", "Export", "Widgets"]} allowsMultipleAnswers isAnonymous={false} />
+
+<Poll.Quiz
+  question="Which type is Pikachu?"
+  options={["Fire", "Electric", "Water"]}
+  correctOptionId={1}
+  explanation="Pikachu is an Electric-type Pokémon."
+/>
+```
+
+### Notification
+
+Answers a button press with a toast at the top of the chat, or a modal alert when `showAlert` is
+set. It renders nothing in the chat itself. Every button press is answered for you (to stop the
+loading spinner), and a `<Notification>` in the render adds text to that answer.
+
+<TypeTable
+  type={{
+    text: { type: 'string', required: true, description: 'Toast or alert text.' },
+    showAlert: { type: 'boolean', description: 'Show a modal alert with an OK button instead of a toast.' },
+  }}
+/>
+
+```tsx title="src/screens/Settings.tsx"
+import { useNavigate, useSession } from "@teactjs/core";
+import { Message, Notification, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Settings() {
+  const navigate = useNavigate();
+  const [session, setSession] = useSession<{ darkMode?: boolean }>();
+
+  return (
+    <Message text={`Dark mode is ${session.darkMode ? "on" : "off"}.`}>
+      <InlineKeyboard>
+        <Button
+          text="Toggle and save"
+          onClick={() => {
+            setSession({ darkMode: !session.darkMode });
+            navigate("/saved", { mode: "push" });
+          }}
+        />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+// Route "/saved": the toast answers the button press, the message is sent below.
+export function Saved() {
+  return (
+    <>
+      <Notification text="Saved!" />
+      <Message text="Your settings are saved." />
+    </>
+  );
+}
+```
+
+<TelegramPreview text="Your settings are saved." notification="Saved!" />
+
+<Callout type="warn" title="Notifications ride on sends">
+  The Telegram adapter attaches a notification to the answer when the tree is delivered with a
+  **send**. When the press is applied as an in-place **edit** (the default for text screens), the
+  notification is not picked up in the current adapter. If the toast matters, deliver that screen
+  as a new message (for example `navigate(path, { mode: "push" })`) or show the confirmation in the
+  message text.
+</Callout>
 
 ## Formatting
 
-Compose rich text with `Bold`, `Italic`, `Code`, `Alert`, `List` / `ListItem`,
-and `Divider`. Use `<Notification>` to answer a callback query with a toast or
-alert.
+Formatting components switch the message (or caption) to HTML parse mode and wrap their children
+in tags. They work inside `<Message>` and inside media components.
+
+| Component | Alias | Props | Renders |
+| --- | --- | --- | --- |
+| `Bold` | `Message.Bold` | `children` | `<b>…</b>` |
+| `Italic` | `Message.Italic` | `children` | `<i>…</i>` |
+| `Code` | `Message.Code` | `language?: string`, `children` | `<code>…</code>`, or `<pre><code class="language-x">…</code></pre>` with `language` |
+| `Alert` | – | `variant?`, `title?`, `children` | Icon + title line, then the children, then a line break |
+| `List` | – | `ordered?: boolean` (default `false`), `children` | Each child on its own line, prefixed `• ` or `1. ` |
+| `ListItem` | `List.Item` | `children` | One list entry |
+| `Divider` | – | `char?: string` (default `'─'`), `length?: number` (default `20`) | The character repeated, then a line break |
+
+`Alert` variants and their icons: `info` ℹ️ (default), `warning` ⚠️, `error` ❌, `success` ✅.
+
+```tsx title="src/screens/Summary.tsx"
+import { Message, Alert, List, Divider, Bold, Code } from "@teactjs/ui";
+
+export function Summary({ name, items }: { name: string; items: string[] }) {
+  return (
+    <>
+      <Alert variant="success" title="Order placed">
+        Thanks, <Bold>{name}</Bold>!
+      </Alert>
+      <Divider length={12} />
+      <List ordered>
+        {items.map((item) => (
+          <List.Item key={item}>{item}</List.Item>
+        ))}
+      </List>
+      <Message>
+        Reference: <Code>A-1042</Code>
+      </Message>
+    </>
+  );
+}
+```
+
+<TelegramPreview text={"✅ Order placed\nThanks, Ada!\n────────────\n1. Pikachu plush\n2. Poké Ball keyring\nReference: A-1042"} />
+
+### HTML escaping
+
+When formatting components switch a message to HTML, Teact escapes `&`, `<` and `>` in all of your
+text: the `text` prop, plain children and the children of formatting components. User input
+such as a name like `<script>` is shown literally and cannot break or inject markup.
 
 ```tsx
-import { Message, Bold, Italic, Code } from "@teactjs/ui";
-
+// Sends: Hello <b>&lt;Ada&gt;</b>  (parse_mode HTML)
 <Message>
-  Hello <Bold>{userName}</Bold>, run <Code>/start</Code> to begin.
+  Hello <Bold>{"<Ada>"}</Bold>
+</Message>
+```
+
+If you set `parseMode` yourself, the `text` prop is sent **verbatim**: escaping it is your job.
+
+```tsx
+// Your own markup, your own escaping
+<Message parseMode="HTML" text={`<b>${escapeHtml(userName)}</b> joined`} />
+```
+
+<Callout type="error" title="Don't mix Markdown with formatting components">
+  Formatting components always emit HTML tags. With `parseMode="Markdown"` or `"MarkdownV2"` on the
+  same message, Telegram receives literal `<b>` tags. Use either your own `parseMode` and markup, or
+  formatting components, per message.
+</Callout>
+
+## Compound aliases
+
+Several components are also available as properties of a parent, which reads well in JSX:
+
+| Alias | Component |
+| --- | --- |
+| `Message.Bold`, `Message.Italic`, `Message.Code` | `Bold`, `Italic`, `Code` |
+| `InlineKeyboard.Row`, `Button.Row` | `ButtonRow` |
+| `InlineKeyboard.Button` | `Button` |
+| `Button.WebApp` | `WebAppButton` |
+| `Location.Live`, `Location.Venue` | `LiveLocation`, `Venue` |
+| `MediaGroup.Photo`, `MediaGroup.Video` | `MediaPhoto`, `MediaVideo` |
+| `ReplyKeyboard.Row`, `ReplyKeyboard.Button` | `ReplyRow`, `ReplyButton` |
+| `ReplyKeyboard.RequestContact`, `ReplyKeyboard.RequestLocation` | `RequestContactButton`, `RequestLocationButton` |
+| `List.Item` | `ListItem` |
+| `Poll.Quiz` | `Poll` with `type: 'quiz'` |
+
+Every component also exports its props type (`MessageProps`, `ButtonProps`, `PollProps`, …), plus
+`ButtonVariant` and `AlertVariant`.
+
+## Recipes
+
+### Confirm before delete
+
+Keep the "are you sure?" step in local state. Both steps edit the same message.
+
+```tsx title="src/screens/DeleteItem.tsx"
+import { useState, useParams, useNavigate } from "@teactjs/core";
+import { Message, Bold, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+import { deleteItem } from "../api";
+
+export function DeleteItem() {
+  const { id } = useParams<"/items/:id/delete">();
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+
+  if (!confirming) {
+    return (
+      <Message>
+        Delete item <Bold>{id}</Bold>?
+        <InlineKeyboard>
+          <Button text="Delete" variant="destructive" onClick={() => setConfirming(true)} />
+          <Button text="Cancel" route="/items/:id" params={{ id }} />
+        </InlineKeyboard>
+      </Message>
+    );
+  }
+
+  return (
+    <Message text="This cannot be undone. Are you sure?">
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button
+            text="Yes, delete"
+            variant="destructive"
+            onClick={async () => {
+              await deleteItem(id);
+              navigate("/items");
+            }}
+          />
+          <Button text="No" onClick={() => setConfirming(false)} />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview edited text="This cannot be undone. Are you sure?" buttons={[["✕ Yes, delete", "No"]]} />
+
+### Grid menu from data
+
+```tsx
+const regions = ["Kanto", "Johto", "Hoenn", "Sinnoh", "Unova"];
+
+<Message text="Pick a region:">
+  <InlineKeyboard columns={3}>
+    {regions.map((r) => (
+      <Button key={r} text={r} route="/region/:name" params={{ name: r.toLowerCase() }} />
+    ))}
+  </InlineKeyboard>
 </Message>;
 ```
 
-<Callout type="warn">
-  When formatting components render in HTML mode, **user content is auto-escaped**
-  for you. Do **not** hand-concatenate raw HTML into `text`. If you set
-  `parseMode="HTML"` yourself on a `<Message>`, your text is passed **verbatim**
-  and you own the escaping.
-</Callout>
+<TelegramPreview text="Pick a region:" buttons={[["Kanto", "Johto", "Hoenn"], ["Sinnoh", "Unova"]]} />
 
-## Resilience
+### Ask for the user's contact
 
-- `SuspenseFallback` — a loading line for `Suspense` boundaries.
-- `ErrorBoundary` — catch render errors and show a fallback UI (also re-exported
-  from `@teactjs/core`).
+```tsx title="src/screens/ShareContact.tsx"
+import { useEventData } from "@teactjs/core";
+import { Message, ReplyKeyboard, ReplyKeyboardRemove } from "@teactjs/ui";
 
-## Do / Don't
+export function ShareContact() {
+  const contact = useEventData<{ phone_number: string; first_name: string }>("contact");
 
-- **Do** let a bare `<Button>` be its own row, or use `columns={n}` to auto-grid;
-  reach for `<ButtonRow>` only when you need explicit rows.
-- **Do** put user-supplied text inside `<Bold>`/`<Code>` etc. and let the engine
-  escape it.
-- **Don't** hand-concatenate HTML into message text — that bypasses escaping.
-- **Don't** try to edit a text message onto a media message (or vice-versa) in
-  place; the engine sends a **new** message instead.
-- **Don't** rely on 11+ items in a `<MediaGroup>` or 5000-char text — Telegram
-  limits are clamped.
+  if (contact) {
+    return (
+      <Message text={`Thanks ${contact.first_name}, we'll call ${contact.phone_number}.`}>
+        <ReplyKeyboardRemove />
+      </Message>
+    );
+  }
+
+  return (
+    <Message text="Share your number so a courier can reach you.">
+      <ReplyKeyboard oneTimeKeyboard>
+        <ReplyKeyboard.RequestContact text="📱 Share my number" />
+      </ReplyKeyboard>
+    </Message>
+  );
+}
+```
+
+<TelegramPreview text="Share your number so a courier can reach you." replyKeyboard={[["📱 Share my number"]]} />
+
+### Raw callback data for many similar buttons
+
+A string `onClick` lets one screen handle many buttons without registering a handler per button.
+The data is not tied to process memory, but after a restart the press is rendered by your
+starting screen, so in router apps prefer route buttons for navigation.
+
+```tsx
+import { useCallbackData } from "@teactjs/core";
+
+function Ratings() {
+  const data = useCallbackData(); // e.g. "rate:4" after a tap
+  const rating = data?.startsWith("rate:") ? Number(data.slice(5)) : null;
+
+  return (
+    <Message text={rating ? `You rated ${rating}/5` : "Rate us:"}>
+      <InlineKeyboard columns={5}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Button key={n} text={"⭐".repeat(n)} onClick={`rate:${n}`} />
+        ))}
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+Telegram limits `callback_data` to 64 bytes, so keep raw strings and route paths short.
+
+## Related
+
+<Cards>
+  <Card title="Router" href="/docs/guides/router" description="Screens, route buttons, params and navigation modes." />
+  <Card title="Hooks" href="/docs/guides/hooks" description="Read the update, session and route from components." />
+  <Card title="Events" href="/docs/guides/events" description="React to shared contacts, photos and other updates." />
+  <Card title="@teactjs/ui package" href="/docs/packages/ui" description="Package reference and exports." />
+</Cards>

@@ -25,6 +25,146 @@ if (import.meta.main) bot.start();
 
 Projects scaffolded with `bun create teact` already follow this shape.
 
+## Checklist per target
+
+Pick your target and work through its list. Details for each step follow in the sections below.
+
+<Tabs items={['VPS (PM2 / systemd)', 'Docker', 'Cloudflare Workers', 'Vercel Edge', 'Bun.serve']}>
+<Tab value="VPS (PM2 / systemd)">
+
+1. `export const bot` and guard `bot.start()` with `if (import.meta.main)`.
+2. `bun run build` (or `teact build --target node` for Node).
+3. Copy `dist/`, `package.json`, the lockfile and `teact.config.ts` (if you have one) to the server,
+   and run `bun install --production`. `dist/` imports your dependencies from `node_modules` at
+   runtime unless you build with `--standalone`, and even then grammY and database clients stay
+   external.
+4. Set `TELEGRAM_BOT_TOKEN` (and database URLs) in the service environment or a root `.env`.
+5. Run `bun run dist/index.js` under PM2 or systemd with automatic restarts.
+6. Run **one** polling process per token, or switch to the webhook server.
+7. Use a durable [session store](/docs/guides/databases#durable-sessions) if users must survive
+   restarts mid-flow.
+
+```bash title="PM2"
+pm2 start "bun run dist/index.js" --name my-bot
+pm2 save
+pm2 startup   # start PM2 itself on boot
+```
+
+```ini title="/etc/systemd/system/my-bot.service"
+[Unit]
+Description=My Teact bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/srv/my-bot
+ExecStart=/usr/local/bin/bun run dist/index.js
+EnvironmentFile=/srv/my-bot/.env
+Restart=always
+RestartSec=5
+User=bot
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now my-bot
+journalctl -u my-bot -f
+```
+
+`bot.start()` handles `SIGTERM` and `SIGINT`: it stops every chat, runs plugin `onStop` hooks (which
+flush storage and close clients you opted into) and disconnects before exiting. Both PM2 and systemd
+send `SIGTERM` on stop and restart.
+
+</Tab>
+<Tab value="Docker">
+
+1. Build inside the image, then copy `dist/` into a slim runtime stage with production dependencies.
+2. Copy `teact.config.ts` too: it is loaded from the working directory at startup, not bundled.
+3. Pass secrets as environment variables at run time, never in the image.
+4. Mount a volume for SQLite or the `'file'` storage driver, or use an external database.
+
+```dockerfile title="Dockerfile"
+FROM oven/bun:1 AS build
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+RUN bun run build
+
+FROM oven/bun:1 AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+COPY --from=build /app/dist ./dist
+# Loaded at runtime from the working directory (remove if you don't have one)
+COPY teact.config.ts ./
+CMD ["bun", "run", "dist/index.js"]
+```
+
+```bash
+docker build -t my-bot .
+docker run -d --name my-bot --restart unless-stopped \
+  -e TELEGRAM_BOT_TOKEN=123:abc \
+  -v my-bot-data:/app/data \
+  my-bot
+```
+
+Add a `.dockerignore` with `node_modules`, `dist` and `.env` so local files don't leak into the
+build. `docker stop` sends `SIGTERM`, which triggers the graceful shutdown.
+
+</Tab>
+<Tab value="Cloudflare Workers">
+
+1. `teact deploy cloudflare` to scaffold `src/worker.ts` and `wrangler.jsonc`.
+2. Pass `plugins` and `session.store` to `createBot()`: `teact.config.ts` is not loaded.
+3. Use D1 (or KV for rarely-changing data) via `@teactjs/cloudflare`, read with `getEnv()`.
+4. `bunx wrangler secret put TELEGRAM_BOT_TOKEN` and `WEBHOOK_SECRET`.
+5. `bunx wrangler deploy` (or `teact deploy --run`).
+6. `teact webhook set https://my-bot.<account>.workers.dev --secret <WEBHOOK_SECRET>`.
+7. Run `bot.setCommands()` once.
+8. Check delivery with `teact webhook info`.
+
+See [Cloudflare Workers](#cloudflare-workers) below.
+
+</Tab>
+<Tab value="Vercel Edge">
+
+1. Add `api/bot.ts` that calls `bot.fetch()` with `runtime: "edge"` (see [Other platforms](#other-platforms)).
+2. Pass `plugins` and `session.store` to `createBot()`.
+3. Use an HTTP database: Upstash Redis or Neon Postgres.
+4. Add `TELEGRAM_BOT_TOKEN` and `WEBHOOK_SECRET` as project environment variables.
+5. Deploy, then `teact webhook set https://<project>.vercel.app/api/bot --secret <WEBHOOK_SECRET>`.
+6. Run `bot.setCommands()` once.
+
+</Tab>
+<Tab value="Bun.serve">
+
+1. Serve `bot.fetch` from `Bun.serve` behind HTTPS (a reverse proxy or a platform that terminates
+   TLS).
+2. Pass `secretToken` so only Telegram can post updates.
+3. `teact webhook set https://bot.example.com --secret <WEBHOOK_SECRET>`.
+4. Run `bot.setCommands()` once: `bot.fetch()` doesn't register commands.
+5. Keep it alive with PM2, systemd or Docker as for a VPS.
+
+```ts title="server.ts"
+import { bot } from "./src/index";
+
+Bun.serve({
+  port: Number(process.env.PORT ?? 3000),
+  fetch: (req) => bot.fetch(req, { secretToken: process.env.WEBHOOK_SECRET }),
+});
+```
+
+This is a long-running process, so in-memory sessions and `onClick` handlers work, and streaming
+and conversations are available.
+
+</Tab>
+</Tabs>
+
 ## Long-running (polling or webhook server)
 
 ### Build
@@ -72,7 +212,7 @@ Bun/Node):
   **one** instance per token, or updates will be split between processes.
 - **Webhook server** — set `mode: "webhook"` with a `domain`, `port`, `path`, and `secretToken` and
   Teact starts an HTTP server for Telegram to push to. See the
-  [Telegram adapter guide](/docs/guides/telegram-adapter#webhook-server).
+  [Telegram adapter guide](/docs/guides/telegram-adapter#transports).
 
 ### Process manager
 
@@ -167,6 +307,21 @@ bun -e "import { bot } from './src/index'; await bot.setCommands()"
 
 It uses the same token resolution as the bot (`createBot({ token })` or `TELEGRAM_BOT_TOKEN`, which
 Bun loads from `.env`).
+
+Or keep it as a script you run from CI after each deploy:
+
+```ts title="scripts/set-commands.ts"
+import { bot } from "../src/index";
+
+const count = await bot.setCommands();
+console.log(`Registered ${count} command(s)`);
+await bot.stop();
+```
+
+The menu lists every command declared with `command:` on a route and every entry of
+`createBot({ commands })`, with their `description`. `setCommands()` initializes the bot (runs plugin
+`onStart`, connects the adapter) without polling. With no commands it registers nothing and resolves
+`0`.
 
 <Callout type="info">
   If `teact deploy` warns that your entry doesn't `export const bot`, add the export and the
@@ -295,6 +450,63 @@ teact webhook delete     # add --drop to discard queued updates
 bun dev
 ```
 
+## Secrets
+
+| Variable | Needed for | Where it is read |
+| -------- | ---------- | ---------------- |
+| `TELEGRAM_BOT_TOKEN` | Always | `createBot`, `bot.fetch(req, { token })`, `teact webhook`, `teact doctor` |
+| `WEBHOOK_SECRET` | Webhooks | Your code (`secretToken`), and `teact webhook set` when you omit `--secret` |
+| `PAYMENT_PROVIDER_TOKEN` | [Payments](/docs/guides/payments) | Your code |
+| Database URLs | Database drivers | Your code |
+
+- **Local and VPS**: a root `.env` is loaded automatically on Bun and Node. Values already set in the
+  process environment win over the file. The `teact` CLI also reads `.env.local`.
+- **Workers**: `wrangler secret put NAME`, and `.dev.vars` for `wrangler dev`.
+- **Vercel and similar**: the project's environment variables.
+- **Never commit** `.env` or `.dev.vars`. Scaffolded projects ignore them.
+- **Generate the webhook secret** with `openssl rand -hex 32`. Telegram accepts 1–256 characters of
+  `A-Z`, `a-z`, `0-9`, `_` and `-`.
+- **Rotate a leaked token** with BotFather (`/revoke`), update it everywhere, then re-run
+  `teact webhook set` (the webhook belongs to the old token).
+
+## Managing the webhook
+
+`teact webhook` talks to the Bot API with `TELEGRAM_BOT_TOKEN` from the environment, `.env.local` or
+`.env`:
+
+| Command | Bot API call | Effect |
+| ------- | ------------ | ------ |
+| `teact webhook set <url> [--secret <token>] [--drop]` | `setWebhook` | Point Telegram at `<url>`. `--secret` defaults to `WEBHOOK_SECRET`; `--drop` discards queued updates. |
+| `teact webhook info` | `getWebhookInfo` | Show the URL (or "none — polling"), the pending update count and the last delivery error. |
+| `teact webhook delete [--drop]` | `deleteWebhook` | Remove the webhook so the bot can poll again. |
+
+```bash
+teact webhook set https://my-bot.example.workers.dev --secret "$WEBHOOK_SECRET"
+teact webhook info
+```
+
+`teact webhook set` is for `bot.fetch()` deployments. With the built-in webhook server
+(`mode: "webhook"`), `bot.start()` calls `setWebhook` itself with `domain + path` and `secretToken`.
+
+## Zero-downtime deploys
+
+- **Telegram queues updates while you are down** and delivers them when the bot is back, so a short
+  restart loses nothing. Add [`ignoreOld()`](/docs/guides/middleware-plugins#ignoreold) so users
+  don't get answers to messages from an hour ago after a long outage.
+- **Polling: stop the old process before starting the new one.** Two pollers on one token conflict
+  and split updates. A restart takes a moment; there is no overlap-free handover with polling.
+- **Webhooks allow overlap.** Telegram posts each update to one URL; behind a load balancer, old and
+  new instances can serve side by side while you roll over, and a serverless deploy switches
+  atomically.
+- **Make state instance-independent first.** Overlap and restarts only work smoothly with a durable
+  session store, a database storage driver and route buttons. `onClick` handlers live in the memory
+  of the process that rendered them; after a restart Teact re-renders that screen from its initial
+  state and logs a warning.
+- **Graceful shutdown** on `SIGTERM` flushes storage writes and runs `onStop` hooks. Give the process
+  a few seconds before a hard kill.
+- **Changing the webhook URL** is a single `teact webhook set`; updates move to the new URL
+  immediately.
+
 ## Do / Don't
 
 - **Do** `export const bot` and guard `bot.start()` with `if (import.meta.main)` so one entry works
@@ -309,3 +521,12 @@ bun dev
 - **Don't** run more than one polling instance per token.
 - **Don't** rely on the in-memory session store, the `'file'` storage driver, or streaming on the
   edge.
+
+## Related
+
+<Cards>
+  <Card title="Telegram adapter" href="/docs/guides/telegram-adapter" description="Transports, webhook server details and fail-fast startup." />
+  <Card title="Databases" href="/docs/guides/databases" description="Edge-capable drivers and durable session stores." />
+  <Card title="CLI" href="/docs/packages/cli" description="teact build, deploy, webhook and doctor." />
+  <Card title="Middleware & plugins" href="/docs/guides/middleware-plugins" description="ignoreOld, logger and errorReporter for production." />
+</Cards>

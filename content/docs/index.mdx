@@ -1,13 +1,17 @@
 ---
 title: Introduction
-description: Build Telegram bots with React components, hooks, and file-style routing — powered by Teact and grammY.
+description: Teact is a React renderer for Telegram bots. Write screens as components with hooks, routing and JSX; Teact turns each render into messages it sends or edits.
 ---
 
 <ReleaseBadge>v1.0 — stable</ReleaseBadge>
 
-Teact lets you ship Telegram bots using the same mental model as React apps: **components**, **hooks**, **routing**, and **JSX**, compiled and run with [Bun](https://bun.sh).
+Teact lets you build Telegram bots the way you build React apps: **components**, **hooks**, **routing** and **JSX**, run with [Bun](https://bun.sh). You describe what a chat should show, and Teact works out which Telegram messages to send or edit, on top of [grammY](https://grammy.dev).
 
-```tsx
+```tsx title="src/index.tsx"
+import { createBot, useState } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { TelegramAdapter } from "@teactjs/telegram";
+
 function Counter() {
   const [count, setCount] = useState(0);
   return (
@@ -19,39 +23,99 @@ function Counter() {
     </Message>
   );
 }
+
+export const bot = createBot({
+  component: Counter,
+  adapter: new TelegramAdapter(),
+  commands: { start: { description: "Start the counter" } },
+});
+
+if (import.meta.main) bot.start();
 ```
 
+<TelegramPreview
+  bot="Counter Bot"
+  user="/start"
+  text="Count: 2"
+  buttons={[["−1", "+1"]]}
+  edited
+  caption="After two taps on +1 — the same message is edited in place"
+/>
+
+Tapping a button does not post a new message. The click runs `setCount`, the component re-renders, and Teact edits the existing message to match.
+
+## How Teact works
+
+Teact is a custom React renderer. The pieces fit together like this:
+
+1. **Updates come in.** The adapter (`TelegramAdapter` from `@teactjs/telegram`) receives Telegram updates by polling, a webhook server, or `bot.fetch(request)` on serverless, and hands each one to the engine as a platform-neutral `BotContext` (`chatId`, `userId`, `text`, `callbackData`, `raw`, …).
+2. **Middleware runs.** Plugin middleware runs first, then your own `middleware`. A middleware can stop the update with `halt(ctx)`; otherwise the chain continues automatically.
+3. **React renders.** The engine renders your `component` (or the route your `router` resolves) with `react-reconciler`. Components such as `<Message>`, `<InlineKeyboard>` and `<Button>` become host elements (`tg-message`, `tg-keyboard`, `tg-button`, …), and the reconciler produces an **output tree** of plain `{ type, props, children }` nodes.
+4. **The adapter sends or edits.** On every commit the engine passes the output tree to the adapter. By default (`replace` mode) it **edits** the chat's last bot message when that is possible and **sends** a new one otherwise. The adapter serializes the tree into a Bot API call: `sendMessage`, `sendPhoto`, `editMessageText`, and so on.
+
+### One root per chat
+
+Every chat gets its own React root, keyed by platform and chat id. State from `useState` lives in that root, so two users never share it. Updates for the same chat are processed one at a time, in order; different chats run concurrently.
+
+- A **button press** edits the message the button lives on.
+- A **new text message** from the user makes the next render send a fresh message below it.
+- A **registered command** (such as `/start`) or a **route button** resets the chat's root, so the screen starts from its initial state.
+
+### Buttons and handlers
+
+`<Button onClick={fn}>` registers `fn` in the chat's in-memory handler map and sends an opaque `callback_data` id. `<Button route="/settings">` encodes the route itself in the `callback_data`, so it works even after a restart. Prefer route buttons, or keep screen state in `useSession`, when you deploy to serverless (see [Deployment](/docs/guides/deployment)).
+
+### Sessions
+
+`useSession()` returns `[session, updateSession]` for the current chat. Sessions are read from a `SessionStore` before each render and written back after it. The default store is in memory; pass a durable one with `createBot({ session: { store } })`. See [Storage](/docs/guides/storage).
+
+## Choose your path
+
 <Cards>
-  <Card title="Install & scaffold" href="/docs/getting-started/installation" description="Create a project and add your bot token." />
-  <Card title="Quick start" href="/docs/getting-started/quick-start" description="From zero to a running bot in a few minutes." />
-  <Card title="Router & navigation" href="/docs/guides/router" description="createRouter, guards, and useNavigate." />
-  <Card title="Deploy to the edge" href="/docs/guides/deployment" description="Cloudflare Workers & serverless with bot.fetch()." />
+  <Card title="New to Telegram bots" href="/docs/getting-started/quick-start" description="Get a token from BotFather and run a bot with a router, a button, a session counter and a command." />
+  <Card title="Coming from grammY or Telegraf" href="#coming-from-grammy-or-telegraf" description="Map handlers, ctx.reply, keyboards, sessions and scenes to their Teact equivalents." />
+  <Card title="Deploying a bot" href="/docs/guides/deployment" description="Polling, a webhook server, or bot.fetch() on Cloudflare Workers and other edge runtimes." />
 </Cards>
+
+### Coming from grammY or Telegraf
+
+Teact runs on grammY, so the Bot API concepts are the same. What changes is that you describe the screen instead of issuing replies.
+
+| In grammY / Telegraf | In Teact |
+| --- | --- |
+| Handlers: `bot.command("start", …)`, `bot.on("message", …)` | Components. Register commands with `createBot({ commands: { start: { description, route: "/" } } })`; react to specific updates inside a component with `useOn("photo", handler)`, `useText()` or `useCallbackData()` |
+| `ctx.reply(text, { reply_markup })` | Return `<Message text="…">` from a component. Re-renders edit the message; for quick text replies a command can use `handler: ({ reply }) => reply("…")` |
+| `InlineKeyboard` builder / `Markup.inlineKeyboard` | `<InlineKeyboard>` with `<Button onClick>`, `<Button route>` or `<Button url>`; `<ReplyKeyboard>` for reply keyboards |
+| `bot.callbackQuery("data", …)` | `onClick` on the `<Button>` itself; no callback data to match by hand |
+| `session()` middleware and `ctx.session` | `useSession()` in any component; choose the store with `createBot({ session: { store } })` |
+| Scenes / wizards, `@grammyjs/conversations` | `useConversation`, `useForm`, `<Conversation>` and `<Form>` from `@teactjs/core`; `conversationsPlugin()` from `@teactjs/telegram` for imperative grammY-style flows |
+| `bot.use(middleware)` | `createBot({ middleware: [...] })`, with `halt(ctx)` to stop an update |
+| `ctx.api` | `useTelegram()` returns `{ api, ctx, chat, from, chatId }` for raw access |
 
 ## What you can build
 
-- **Messages & keyboards** — inline and reply keyboards with `<Button>`, `<InlineKeyboard>`, `<ReplyKeyboard>`.
-- **Routing** — `createRouter` with params, `beforeLoad` guards, and navigation modes (`push`, `replace`, `stack`, `dismiss`).
-- **Flows** — multi-step **conversations** and schema-driven **forms**.
-- **Platform features** — **streaming** text, **i18n** with automatic language detection, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** via `useOn`.
-- **Databases** — durable storage and sessions on Redis, Postgres, SQLite, MongoDB, or Cloudflare D1/KV, on long-running servers and the edge.
-- **Production plugins** — rate limiting, logging, maintenance mode, error reporting, analytics, feature flags, and broadcasts.
-- **Deploy anywhere** — long-running polling _or_ serverless via a web-standard `bot.fetch(request)` handler.
+- **Messages and keyboards**: inline and reply keyboards with `<Button>`, `<InlineKeyboard>` and `<ReplyKeyboard>`.
+- **Routing**: `createRouter` with params, `beforeLoad` guards, and navigation modes (`push`, `replace`, `stack`, `dismiss`).
+- **Flows**: multi-step **conversations** and schema-driven **forms**.
+- **Platform features**: **streaming** text, **i18n** with automatic language detection, **payments** (`useInvoice`), **auth** plugins, **session** storage, and **events** with `useOn`.
+- **Databases**: durable storage and sessions on Redis, Postgres, SQLite, MongoDB, or Cloudflare D1/KV, on long-running servers and the edge.
+- **Production plugins**: rate limiting, logging, maintenance mode, error reporting, analytics, feature flags and broadcasts.
+- **Deploy anywhere**: long-running polling, a webhook server, or serverless through a web-standard `bot.fetch(request)` handler.
 
 ## Packages at a glance
 
-| Package | Role |
-| -------- | ---- |
-| `@teactjs/core` | The engine — `createBot`, router, hooks, plugin host, reconciler, and re-exported React |
-| `@teactjs/ui` | Components — `Message`, keyboards, media, polls, formatting |
-| `@teactjs/telegram` | grammY-based adapter (polling & webhook) + `conversationsPlugin` / `streamPlugin` |
-| `@teactjs/plugin-sdk` | `definePlugin` — author your own plugins |
-| `@teactjs/storage` | Persistent storage plugin — memory/file drivers, async database drivers, `createSessionStore` |
-| `@teactjs/redis`, `@teactjs/postgres`, `@teactjs/sqlite`, `@teactjs/mongodb`, `@teactjs/cloudflare` | Database drivers, session stores and client plugins |
-| `@teactjs/i18n` | `i18nPlugin`, UI strings in 19 languages, `LanguagePicker`, `useFormat` |
-| `@teactjs/plugins` | `rateLimit`, `logger`, `maintenance`, `errorReporter`, `analytics`, `featureFlags`, … |
-| `@teactjs/testing` | `MockAdapter`, `renderBot` |
-| `@teactjs/cli` / `create-teact` | Dev, build, `teact add`, deploy, doctor, and scaffolding |
+| Package | Role | Key exports |
+| --- | --- | --- |
+| [`@teactjs/core`](/docs/packages/core) | The engine: reconciler, runtime, router, hooks, plugin host | `createBot`, `createRouter`, `useSession`, `useNavigate`, `defineConfig`, React hooks re-exported |
+| [`@teactjs/ui`](/docs/packages/ui) | Components | `Message`, `InlineKeyboard`, `Button`, `ReplyKeyboard`, media, `Poll`, `Bold`, … |
+| [`@teactjs/telegram`](/docs/packages/telegram) | grammY-based adapter (polling, webhook, serverless) | `TelegramAdapter`, `conversationsPlugin`, `streamPlugin` |
+| [`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk) | Author your own plugins | `definePlugin` |
+| [`@teactjs/storage`](/docs/packages/storage) | Persistent storage plugin | `storagePlugin`, `useStorage`, `createSessionStore` |
+| [`@teactjs/redis`](/docs/packages/redis), [`postgres`](/docs/packages/postgres), [`sqlite`](/docs/packages/sqlite), [`mongodb`](/docs/packages/mongodb), [`cloudflare`](/docs/packages/cloudflare) | Database drivers, session stores and client plugins | `RedisDriver`, `PostgresDriver`, `SqliteDriver`, `D1Driver`, `d1SessionStore`, … |
+| [`@teactjs/i18n`](/docs/packages/i18n) | Translations, UI strings in 19 languages | `i18nPlugin`, `LanguagePicker`, `useFormat` |
+| [`@teactjs/plugins`](/docs/packages/plugins) | Production middleware | `rateLimit`, `logger`, `maintenance`, `errorReporter`, `analytics`, `featureFlags`, … |
+| [`@teactjs/testing`](/docs/packages/testing) | Test without Telegram | `MockAdapter`, `renderBot` |
+| [`@teactjs/cli`](/docs/packages/cli) / [`create-teact`](/docs/packages/create-teact) | Dev server, build, `teact add`, deploy, doctor, scaffolding | `teact dev`, `teact build`, `teact doctor`, `bun create teact` |
 
 <Callout type="info">
   The 0.2.0 rewrite folded the old `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer`
@@ -62,7 +126,16 @@ function Counter() {
 ## Next steps
 
 1. Follow [Installation](/docs/getting-started/installation) and [Quick start](/docs/getting-started/quick-start).
-2. Skim [Configuration](/docs/getting-started/configuration) for `teact.config.ts`, plugins, and sessions.
-3. Deep-dive the [Guides](/docs/guides) in the sidebar — routing, components, conversations, deployment, and more.
+2. Skim [Configuration](/docs/getting-started/configuration) for `teact.config.ts`, plugins and sessions.
+3. Deep-dive the guides in the sidebar: [components](/docs/guides/components), [routing](/docs/guides/router), [conversations](/docs/guides/conversations), [deployment](/docs/guides/deployment) and more.
 
 Coming from a 0.2.0 alpha? See [Upgrading from the alpha](/docs/getting-started/upgrading).
+
+## Related
+
+<Cards>
+  <Card title="Install & scaffold" href="/docs/getting-started/installation" description="Create a project with bun create teact and add your bot token." />
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="From BotFather token to a running bot, step by step." />
+  <Card title="Router & navigation" href="/docs/guides/router" description="createRouter, guards and useNavigate." />
+  <Card title="Deploy to the edge" href="/docs/guides/deployment" description="Cloudflare Workers and serverless with bot.fetch()." />
+</Cards>

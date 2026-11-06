@@ -1,71 +1,253 @@
 ---
 title: Installation
-description: Install Bun (recommended), scaffold with create-teact or the teact CLI, and add @teactjs packages to an existing project.
+description: Requirements, scaffolding with bun create teact or teact create (every template, feature and --db option), manual installs, the project layout, tsconfig and editor setup.
 ---
 
-## Prerequisites
+There are two ways to start: scaffold a new project with `bun create teact` (or `teact create` if you want flags), or add the packages to an existing project by hand. Both end with the same layout: a `src/index.tsx` entry that calls `createBot()`, a `.env` holding your token, and `teact dev` to run it.
 
-- **[Bun](https://bun.sh)** (recommended for `bun dev` / HMR) or Node 20+ if you use npm/pnpm.
-- A **Telegram bot token** from [@BotFather](https://t.me/BotFather).
+## Requirements
 
-## New project (recommended)
+| Tool | Version | Why |
+| --- | --- | --- |
+| [Bun](https://bun.sh) | **1.1.0 or newer** | The `teact` CLI runs on Bun (`teact dev` uses `bun --watch`). `teact doctor` reports an error below 1.1.0. |
+| TypeScript | 5.x (scaffolds pin `^5.7.0`) | Type-checking and editor support. `teact doctor` warns when it isn't installed locally. |
+| React | 18 or 19 (scaffolds use `^19.0.0`) | Peer dependency of `@teactjs/core`, `@teactjs/ui` and `@teactjs/telegram`. |
+| A bot token | — | Create a bot with [@BotFather](https://t.me/BotFather) and copy the token it gives you. |
+
+Install or upgrade Bun:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+bun upgrade
+```
+
+<Callout type="info" title="Node in production">
+  You develop with Bun, but the built bot doesn't have to run on it: `teact build --target node`
+  emits a bundle for Node. See [Deployment](/docs/guides/deployment).
+</Callout>
+
+## Scaffold a new project
+
+### `bun create teact` (interactive)
 
 ```bash
 bun create teact my-bot
 cd my-bot
 ```
 
-The wizard asks for:
+The wizard asks, in order:
 
-- **Project name** (if not passed as `my-bot`)
-- **Template** — Starter, Showcase, Counter, or Empty
-- **Features** — storage, conversations, streaming, auth, i18n, payments (varies by template)
-- **Package manager** — `bun`, `npm`, or `pnpm`
-- **Install dependencies** — usually yes
+1. **Project name**, if you didn't pass one. Lowercase letters, numbers, hyphens and underscores only.
+2. **Template**: Starter, Showcase, Counter or Empty (see below).
+3. **Plugins & integrations**: storage, conversations, streaming, auth, payments. Showcase pre-selects all five; the others start with none.
+4. **Storage backend**, only when you picked storage: file (default), memory, SQLite, Redis or Postgres.
+5. **Package manager**: `bun` (recommended), `npm` or `pnpm`.
+6. **Install dependencies?**
 
-Then add your token to `.env`:
+`npx create-teact my-bot` and `pnpm create teact my-bot` run the same wizard.
+
+### `teact create` (flags, no prompts)
+
+The CLI has the same generator with flags, which is handy in scripts and CI. Passing `--template` (or running without a TTY) skips the prompts.
 
 ```bash
-# .env
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+teact create my-bot -t showcase --pm bun
+teact create my-bot -t starter -f storage,auth --db sqlite --no-install
 ```
 
-Start development:
+| Flag | Values | Default |
+| --- | --- | --- |
+| `-t, --template <template>` | `starter`, `showcase`, `counter`, `empty` (legacy `router` → starter, `full` → showcase) | `starter` |
+| `-f, --features <list>` | Comma-separated: `storage`, `conversations`, `streaming`, `auth`, `payments` | All five for `showcase`, none otherwise |
+| `--db <driver>` | `memory`, `file`, `sqlite`, `redis`, `postgres`. Implies the `storage` feature. | `file` |
+| `--pm <manager>` | `bun`, `npm`, `pnpm` | `bun` |
+| `--no-install` | Skip `install` after generating | Installs |
+
+An unknown `--db` value exits with an error listing the valid ones. i18n is always included; it isn't a selectable feature.
+
+### Templates
+
+| Template | What you get |
+| --- | --- |
+| **Starter** | A router with a main menu (`/`) and `/about`, a logging middleware, a `/help` command with a route button, and one extra page per feature: `/settings` (storage), `/stream` (streaming), `/store` (payments) and `/language` (i18n). |
+| **Showcase** | The same app as `examples/showcase-bot`: a Pokédex with nested routes and comments, a component tour, deep links on `/start` (`poke-<id>`, `comments-<id>`), a not-found page, and guarded `/secret` routes plus a login flow when auth is on. Adds `@tanstack/react-query`. |
+| **Counter** | One screen with `useState` and `-1` / `+1` / Reset buttons. No router, no config file. |
+| **Empty** | One `<Message text="Hello from Teact!" />`. No router, no config file. |
+
+### Features
+
+| Feature | Adds |
+| --- | --- |
+| `storage` | `@teactjs/storage` and `storagePlugin(...)` in `createBot({ plugins })`, plus a Settings page using `useStorage` |
+| `conversations` | `conversationsPlugin()` from `@teactjs/telegram`; the full component tour in Showcase |
+| `streaming` | `streamPlugin()` and a StreamDemo page with `useStream` |
+| `auth` | `authPlugin({ admins: [] })` from `@teactjs/core`; guarded routes and a login flow in Showcase |
+| `payments` | A Store page with `useInvoice` and `PAYMENT_PROVIDER_TOKEN=` in `.env` |
+| i18n (always on) | `createI18n` with `en` and `am` locale files and a Language page (Starter and Showcase) |
+
+### Storage backends (`--db`)
+
+| Value | Driver wiring generated in `src/index.tsx` | Extra dependencies | `.env` |
+| --- | --- | --- | --- |
+| `file` | `storagePlugin({ driver: 'file', path: '.teact/storage.json' })` | none | none |
+| `memory` | `storagePlugin({ driver: 'memory' })` | none | none |
+| `sqlite` | `new SqliteDriver({ path: '.teact/bot.db' })` | `@teactjs/sqlite` (uses `bun:sqlite`) | none |
+| `redis` | `new RedisDriver({ client: new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379'), closeClient: true })` | `@teactjs/redis`, `ioredis` | `REDIS_URL` |
+| `postgres` | `new PostgresDriver({ client: postgres(process.env.DATABASE_URL!), closeClient: true })` | `@teactjs/postgres`, `postgres` | `DATABASE_URL` |
+
+Plugins are registered in `createBot({ plugins })` inside `src/index.tsx`, not in `teact.config.ts`, so the same code also works on the edge where the config file isn't loaded.
+
+### After scaffolding
+
+Put your token in `.env`. It is generated with an empty `TELEGRAM_BOT_TOKEN=` line:
+
+```bash title=".env"
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+```
+
+Then start the dev server and send `/start` to your bot:
 
 ```bash
 bun dev
 ```
 
-## CLI equivalents
+## Add Teact to an existing project
 
-If you install the CLI globally or use `bunx`:
+Install the engine, the components, the Telegram adapter and React:
 
-```bash
-teact create my-bot
-teact dev
-teact build
+```npm
+npm i @teactjs/core @teactjs/ui @teactjs/telegram react
 ```
 
-See [CLI](/docs/packages/cli) for all commands (`generate`, `doctor`, flags).
+Add the CLI and types as dev dependencies:
 
-## Existing project
-
-Add the core engine, the components package, and the Telegram adapter:
-
-```bash
-bun add @teactjs/core @teactjs/ui @teactjs/telegram
+```npm
+npm i -D @teactjs/cli typescript @types/react @types/bun
 ```
 
-Optional add-ons: `@teactjs/storage` (persistence), `@teactjs/plugin-sdk` (author plugins), `@teactjs/testing` (dev/test).
+Then add the scripts the scaffolder generates:
+
+```json title="package.json"
+{
+  "type": "module",
+  "scripts": {
+    "dev": "teact dev",
+    "build": "teact build",
+    "start": "bun run dist/index.js"
+  }
+}
+```
+
+Optional packages, added when you need them:
+
+```npm
+npm i @teactjs/storage @teactjs/plugins @teactjs/i18n
+```
+
+```npm
+npm i -D @teactjs/testing
+```
+
+For databases, `teact add` installs the package and its client and wires it in for you, for example `teact add redis --client ioredis`. See [CLI](/docs/packages/cli).
 
 <Callout type="info">
   Import **components** (`Message`, `Button`, `InlineKeyboard`, …) from `@teactjs/ui`. Import
-  `createBot`, the router, hooks, and `defineConfig` from `@teactjs/core`. The old
-  `@teactjs/react`, `@teactjs/runtime`, and `@teactjs/renderer` packages no longer exist — they were
+  `createBot`, the router, hooks and `defineConfig` from `@teactjs/core`. The old
+  `@teactjs/react`, `@teactjs/runtime` and `@teactjs/renderer` packages no longer exist; they were
   folded into `@teactjs/core`.
 </Callout>
 
-## Verify
+Keep every `@teactjs/*` package on the same version. `teact doctor` warns when they differ and prints the `bun add` command that aligns them.
 
-- `teact doctor` — environment and project checks.
-- Send `/start` to your bot after `bun dev` — you should see your root component or router home route.
+## Project layout
+
+A Starter project with the storage feature looks like this:
+
+<Files>
+  <Folder name="my-bot" defaultOpen>
+    <Folder name="src" defaultOpen>
+      <File name="index.tsx" />
+      <Folder name="pages" defaultOpen>
+        <File name="MainMenu.tsx" />
+        <File name="About.tsx" />
+        <File name="Settings.tsx" />
+        <File name="LanguagePage.tsx" />
+      </Folder>
+      <Folder name="locales">
+        <File name="en.json" />
+        <File name="am.json" />
+      </Folder>
+    </Folder>
+    <File name="teact.config.ts" />
+    <File name="package.json" />
+    <File name="tsconfig.json" />
+    <File name=".env" />
+    <File name=".gitignore" />
+  </Folder>
+</Files>
+
+| Path | Purpose |
+| --- | --- |
+| `src/index.tsx` | Entry file. Calls `createBot()` and guards `bot.start()` with `if (import.meta.main)`. The CLI looks for `src/index.tsx`, `src/index.ts`, `src/bot.tsx`, `src/bot.ts`, `index.tsx` or `index.ts`, in that order; override with `teact dev -e <file>`. |
+| `src/pages/` | One component per route. |
+| `teact.config.ts` | Infrastructure settings (`mode`, `webhook`, `session`, `middleware`, `plugins`). Optional; Counter and Empty don't have one. See [Configuration](/docs/getting-started/configuration). |
+| `.env` | `TELEGRAM_BOT_TOKEN` and other secrets. Loaded automatically on Bun and Node. Git-ignored. |
+| `.teact/` | Local data written by the file and SQLite drivers. Git-ignored. |
+
+Showcase adds `src/commands.ts` (the command map with deep links), `src/api/pokeapi.ts`, `src/hooks/usePokemon.ts` and more pages.
+
+## tsconfig
+
+Teact uses the React JSX runtime. This is the `tsconfig.json` every scaffold writes:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src", "teact.config.ts"]
+}
+```
+
+The settings that matter:
+
+- `"jsx": "react-jsx"` and `"jsxImportSource": "react"`: without them you get "Cannot use JSX unless the '--jsx' flag is provided".
+- `"moduleResolution": "bundler"`: resolves the packages' `exports` the way Bun does.
+- `"resolveJsonModule": true`: lets you `import en from './locales/en.json'`.
+- Include `teact.config.ts` so `defineConfig` is type-checked too.
+
+There is no `"dom"` in `lib`: a bot has no browser globals. `@types/bun` provides `process`, `import.meta.main` and Bun's APIs.
+
+## Editor setup
+
+- **Use the project's TypeScript.** In VS Code, run "TypeScript: Select TypeScript Version" and pick the workspace version so the editor matches `node_modules/typescript`.
+- **Type-check from the terminal** with `teact typecheck`, which runs `tsc --noEmit`.
+- **Hover the props.** Components and hooks ship JSDoc, so hovering `<Button>` or `useSession` shows the props and examples.
+
+## Verify the install
+
+Run `teact doctor` in the project root (use `bunx teact doctor` if the CLI isn't installed globally):
+
+```bash
+teact doctor
+```
+
+It checks four groups: **Environment** (Bun version), **Project** (`package.json`, `tsconfig.json`, installed dependencies, an entry file, TypeScript, `.env`), **Telegram** (token format, `getMe`, webhook status) and **Dependencies** (matching `@teactjs/*` versions, a single React copy, database clients). Add `--offline` to skip the network checks. It exits with code 1 when any check fails. See [Troubleshooting](/docs/getting-started/troubleshooting#reading-teact-doctor-output) for what each result means.
+
+## Related
+
+<Cards>
+  <Card title="Quick start" href="/docs/getting-started/quick-start" description="Build a bot with a router, a button, a session counter and a command." />
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="teact.config.ts, every createBot option, and precedence rules." />
+  <Card title="CLI" href="/docs/packages/cli" description="dev, build, add, doctor, webhook and the rest of the teact commands." />
+  <Card title="create-teact" href="/docs/packages/create-teact" description="The scaffolder's templates and generated files in detail." />
+</Cards>

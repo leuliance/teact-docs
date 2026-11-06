@@ -1,62 +1,429 @@
 ---
 title: Testing bots
-description: MockAdapter to simulate updates and assert sends; renderBot for isolated component trees.
+description: Test whole bots with MockAdapter (simulate messages and button presses, assert what was sent), isolated components with renderBot, and routers, sessions, storage, i18n and bot.fetch.
 ---
 
-## MockAdapter
+`@teactjs/testing` lets you run a real bot without Telegram. `MockAdapter` replaces
+`TelegramAdapter`: you simulate incoming messages and button presses and assert on the output trees
+the bot sent or edited. `renderBot` renders a single component without a bot, for quick checks of
+pure UI. Both work with any test runner; the examples use `bun:test`, and Vitest or Jest work the
+same way.
+
+## First test
+
+```npm
+npm i -D @teactjs/testing
+```
+
+```tsx title="src/Counter.tsx"
+import { useState } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <Message text={`Count: ${count}`}>
+      <InlineKeyboard>
+        <Button text="+1" onClick={() => setCount((c) => c + 1)} />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+```tsx title="tests/counter.test.tsx"
+import { test, expect, afterEach } from "bun:test";
+import { createBot } from "@teactjs/core";
+import { MockAdapter } from "@teactjs/testing";
+import { Counter } from "../src/Counter";
+import { latestText, buttonData } from "./helpers";
+
+let bot: ReturnType<typeof createBot>;
+afterEach(() => bot?.stop());
+
+test("the +1 button increments", async () => {
+  const adapter = new MockAdapter();
+  bot = createBot({ component: Counter, adapter }); // no token needed
+  await bot.start();
+
+  await adapter.simulateMessage("1", "1", "/start");
+  expect(latestText(adapter)).toBe("Count: 0");
+
+  await adapter.simulateCallback("1", "1", buttonData(adapter, "+1"));
+  expect(latestText(adapter)).toBe("Count: 1");
+  expect(adapter.edited).toHaveLength(1); // edited in place, not re-sent
+});
+```
+
+`simulateMessage` and `simulateCallback` return promises that resolve once the update has been fully
+handled: middleware, render, send or edit, and session writes. Await them and assert right after.
+
+## Helpers for output trees
+
+Sent and edited messages are `OutputNode` trees: `{ type, props, children }`. A `<Message>` is a
+`tg-message` node with `props.text`; buttons are `tg-button` nodes with `props.text` and
+`props.callbackData`. Two small helpers cover most assertions:
+
+```ts title="tests/helpers.ts"
+import type { OutputNode } from "@teactjs/core";
+import type { MockAdapter } from "@teactjs/testing";
+
+/** The most recent output, whether it was sent or edited in place. */
+export function latest(adapter: MockAdapter): OutputNode | undefined {
+  return [...adapter.sent, ...adapter.edited].sort((a, b) => a.timestamp - b.timestamp).at(-1)?.output;
+}
+
+export function latestText(adapter: MockAdapter): string | undefined {
+  return latest(adapter)?.props.text;
+}
+
+/** All buttons in a tree. */
+export function buttons(node: OutputNode | undefined, out: OutputNode[] = []): OutputNode[] {
+  if (!node) return out;
+  if (node.type === "tg-button") out.push(node);
+  for (const child of node.children) buttons(child, out);
+  return out;
+}
+
+/** callback_data of the button whose label contains `label`, in the latest output. */
+export function buttonData(adapter: MockAdapter, label: string): string {
+  const btn = buttons(latest(adapter)).find((b) => String(b.props.text).includes(label));
+  if (!btn?.props.callbackData) throw new Error(`No button "${label}"`);
+  return btn.props.callbackData;
+}
+```
+
+### What callback data looks like
+
+To press a button you need its callback data. It depends on how the button was declared:
+
+| Button | `props.callbackData` |
+| ------ | -------------------- |
+| `onClick={() => …}` | `__cb:<id>`, generated per render; read it from the output |
+| `route="/settings"` | `__route:/settings` (params filled in) |
+| `onClick="buy:42"` (a string) | `buy:42` |
+| `conversation="signup"` | `__convo:signup` |
+| `url="https://…"` | none (URL buttons have no callback) |
+| `localeCallbackData("de")` | `__teact_locale:de` |
+
+Labels include the variant prefix: `variant="destructive"` turns `"Delete"` into `"✕ Delete"`, so
+match with `includes`.
+
+`__cb:` handlers only exist in the bot instance that rendered them. Pressing an unknown `__cb:` id
+runs no handler and just re-renders the screen (in production, after a restart, that means from its
+initial state), so read the id from the latest output rather than hard-coding it.
+
+## MockAdapter reference
 
 ```ts
 import { MockAdapter } from "@teactjs/testing";
-import { createBot } from "@teactjs/core";
-
 const adapter = new MockAdapter();
-const bot = createBot({ component: App, adapter }); // no token needed
-await bot.start();
-
-// positional args: (chatId, userId, text)
-adapter.simulateMessage("1", "1", "/start");
-adapter.simulateCallback("1", "1", "ok");
-
-// simulate the sender's Telegram language (language_code)
-adapter.simulateMessage("2", "2", "/start", { languageCode: "de" });
-adapter.simulateCallback("2", "2", "ok", undefined, { languageCode: "de" });
-
-adapter.getLastSent();
-adapter.sent;
-adapter.edited;
-adapter.reset();
 ```
 
-`languageCode` lands on `ctx.user.languageCode`, which is what i18n detection reads — use it to
-test [locale detection](/docs/guides/i18n#how-the-locale-is-chosen).
+### Simulating updates
 
-## Testing with storage
+| Method | Description |
+| ------ | ----------- |
+| `simulateMessage(chatId, userId, text, opts?)` | A text message. Each gets a new `messageId` (from 100 up). Returns `Promise<void>`. |
+| `simulateCallback(chatId, userId, data, messageId?, opts?)` | A button press with callback `data`. `messageId` is the message the button is on (optional). |
+| `webhookCallback()` | A `(Request) => Promise<Response>` used by `bot.fetch()`: a JSON body `{ text }` or `{ callbackData }` becomes an update in chat `"1"` from user `"1"`. |
 
-`MemoryAsyncDriver` from `@teactjs/storage` behaves like a database driver (async, per-update cache,
-TTL) without a server, so you can exercise the same code paths as Redis or Postgres:
+`opts` is `{ languageCode?: string }`, the sender's Telegram language. Simulated updates have
+`platform: "mock"` and a user `{ id: userId, firstName: "Test" }`. `ctx.raw` is `{}`, so plugins
+that read the raw Telegram update (`chatFilter`'s chat type, `ignoreOld`'s message date) fall back
+to their defaults.
+
+### Recorded output
+
+| Member | Type | Description |
+| ------ | ---- | ----------- |
+| `sent` | `{ chatId, output, timestamp }[]` | Every `send`. Message ids start at 1. |
+| `edited` | `{ chatId, messageId, output, timestamp }[]` | Every in-place edit. |
+| `cleared` | `{ chatId, messageId }[]` | Keyboards removed (`stack` / `dismiss` navigation). |
+| `commands` | `{ command, description }[]` | The last `setCommands` call (the command menu). |
+| `connected` | `boolean` | Between `connect` and `disconnect`. |
+| `getLastSent()` | `SentMessage \| undefined` | Last entry of `sent`. |
+| `getLastEdited()` | `EditedMessage \| undefined` | Last entry of `edited`. |
+| `reset()` | `void` | Clear `sent` and `edited` and restart the message id counters. `cleared` and `commands` are kept. |
+
+### Adapter methods
+
+`MockAdapter` implements the full `Adapter` contract, so the engine treats it like Telegram:
+`name` (`"mock"`), `requiresToken` (`false`, so `createBot` needs no token), `connect`, `disconnect`,
+`on` / `off`, `send`, `edit`, `canEdit`, `clearButtons`, `setCommands` and `listen` (a no-op).
+`canEdit` mirrors the real adapter: only a `tg-message` without a reply keyboard can be edited, and
+only onto a chat whose last message was also a plain message.
+
+## renderBot: components in isolation
+
+`renderBot(Component, ctx?)` renders one component with a fake runtime context: no bot, no adapter,
+no plugins.
+
+```tsx title="tests/welcome.test.tsx"
+import { test, expect } from "bun:test";
+import { useBot } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { renderBot } from "@teactjs/testing";
+
+function Welcome() {
+  const { user } = useBot();
+  return (
+    <Message text={`Hi ${user.firstName}!`}>
+      <InlineKeyboard>
+        <Button text="Menu" route="/" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 10));
+
+test("greets the user", async () => {
+  const result = renderBot(Welcome, { user: { id: "7", firstName: "Sara", platform: "mock" } });
+  await tick(); // commits are asynchronous
+
+  expect(result.output?.props.text).toBe("Hi Sara!");
+  expect(result.findByType("tg-button")[0].props.callbackData).toBe("__route:/");
+  expect(result.findText()).toContain("Sara");
+
+  result.rerender({ text: "/help" }); // render again with a different context
+  await tick();
+  result.unmount();
+});
+```
+
+| Member | Description |
+| ------ | ----------- |
+| `output` | The latest committed `OutputNode`, or `null`. |
+| `rerender(ctxOverrides?)` | Render again with the base context merged with `ctxOverrides`. State is kept. |
+| `unmount()` | Unmount the tree. |
+| `findByType(type, node?)` | Every node of `type` (`"tg-button"`, `"tg-photo"`, …). |
+| `findText(node?)` | All `text` (and `value`) props in the tree, concatenated. |
+
+The default context is chat `"test-chat"`, user `"test-user"`, platform `"mock"`. `useSession` works
+on a plain in-memory object. Hooks that need a plugin (`useStorage`, `useLocale`, `useAuth`) or a
+router (`useNavigate`) are not available, and `onClick` handlers can't be pressed. Use `MockAdapter`
+for those.
+
+## Testing routers and commands
+
+Use the real router and press route buttons with their `__route:` data:
+
+```tsx title="tests/router.test.tsx"
+import { test, expect } from "bun:test";
+import { createBot } from "@teactjs/core";
+import { MockAdapter } from "@teactjs/testing";
+import { router } from "../src/router";
+import { latestText, buttonData } from "./helpers";
+
+test("navigates from home to settings", async () => {
+  const adapter = new MockAdapter();
+  const bot = createBot({ router, adapter });
+  await bot.start();
+
+  // Commands from `command:` on routes are registered on start
+  expect(adapter.commands.map((c) => c.command)).toContain("start");
+
+  await adapter.simulateMessage("1", "1", "/start");
+  expect(latestText(adapter)).toContain("Welcome");
+
+  await adapter.simulateCallback("1", "1", buttonData(adapter, "Settings")); // "__route:/settings"
+  expect(latestText(adapter)).toContain("Settings");
+
+  // Deep links and params work through the same path
+  await adapter.simulateCallback("1", "1", "__route:/product/42");
+  expect(latestText(adapter)).toContain("#42");
+
+  await bot.stop();
+});
+```
+
+Handler commands reply through `adapter.send`:
 
 ```ts
+const bot = createBot({
+  component: App,
+  adapter,
+  commands: { ping: { description: "Ping", handler: async (ctx) => ctx.reply(`pong ${ctx.args.join(" ")}`) } },
+});
+await bot.start();
+await adapter.simulateMessage("1", "1", "/ping a b");
+expect(adapter.getLastSent()!.output.props.text).toBe("pong a b");
+```
+
+To test a guard, render the protected route with and without the session data it checks, for
+example by pressing a login button first, or by seeding a session store (next section).
+
+## Sessions with a store
+
+Back the session with an async in-memory driver to check what is persisted. Session keys are
+`session:<platform>:<chatId>`, so `session:mock:1` for chat `"1"`:
+
+```tsx title="tests/session.test.tsx"
+import { test, expect } from "bun:test";
+import { createBot } from "@teactjs/core";
+import { MockAdapter } from "@teactjs/testing";
+import { createSessionStore, MemoryAsyncDriver } from "@teactjs/storage";
+import { Account } from "../src/pages/Account";
+import { buttonData } from "./helpers";
+
+test("login is stored in the session", async () => {
+  const backend = new MemoryAsyncDriver();
+  const adapter = new MockAdapter();
+  const bot = createBot({ component: Account, adapter, session: { store: createSessionStore(backend) } });
+  await bot.start();
+
+  await adapter.simulateMessage("1", "1", "/start");
+  await adapter.simulateCallback("1", "1", buttonData(adapter, "Log in"));
+
+  const session = await backend.get<{ auth?: { accessToken: string } }>("session:mock:1");
+  expect(session?.auth?.accessToken).toBeDefined();
+  await bot.stop();
+});
+```
+
+To start a test logged in, write the session before the first update:
+`await backend.set("session:mock:1", { auth: { accessToken: "tok" } })`.
+
+## Storage with MemoryAsyncDriver
+
+`MemoryAsyncDriver` from `@teactjs/storage` behaves like a database driver (async, per-update cache,
+awaited writes, TTL, `incr`) without a server, so tests exercise the same code paths as Redis or
+Postgres. Keys are `<platform>:<chatId>:<key>`:
+
+```ts title="tests/favourites.test.tsx"
 import { storagePlugin, MemoryAsyncDriver } from "@teactjs/storage";
+
+const driver = new MemoryAsyncDriver();
+const adapter = new MockAdapter();
+const bot = createBot({ component: Favourites, adapter, plugins: [storagePlugin({ driver })] });
+await bot.start();
+
+await adapter.simulateMessage("1", "1", "/start");
+await adapter.simulateCallback("1", "1", buttonData(adapter, "Banana"));
+
+expect(await driver.get("mock:1:favourites")).toEqual(["🍌 Banana"]);
+expect(await driver.get("mock:2:favourites")).toBeUndefined(); // other chats untouched
+```
+
+Seed data the same way (`await driver.set("mock:1:favourites", [...])`) before the first update.
+To test your own driver, use [`runDriverConformance`](/docs/guides/databases#test-it-with-rundriverconformance).
+
+## i18n via languageCode
+
+Pass the sender's Telegram language to the simulate methods. It lands on `ctx.user.languageCode`,
+which is what [locale detection](/docs/guides/i18n#how-the-locale-is-chosen) reads:
+
+```ts
+await adapter.simulateMessage("1", "1", "/start", { languageCode: "de" });
+expect(latestText(adapter)).toContain("Hallo");
+
+await adapter.simulateCallback("1", "1", "__teact_locale:en", undefined, { languageCode: "de" });
+expect(latestText(adapter)).toContain("Hello"); // explicit choice beats the Telegram language
+```
+
+Use a different chat id per language case: a chat keeps its locale (and its persisted choice) across
+updates.
+
+## Testing bot.fetch
+
+`MockAdapter.webhookCallback` lets you test the serverless path without a network. `bot.fetch`
+resolves only after the reply was sent:
+
+```ts title="tests/webhook.test.ts"
+import { test, expect } from "bun:test";
+
+test("rejects requests without the secret", async () => {
+  const adapter = new MockAdapter();
+  const bot = createBot({ component: App, adapter });
+
+  const bad = await bot.fetch(new Request("https://bot.test/", { method: "POST", body: "{}" }), {
+    secretToken: "s3cret",
+  });
+  expect(bad.status).toBe(401);
+
+  const ok = await bot.fetch(
+    new Request("https://bot.test/", {
+      method: "POST",
+      body: JSON.stringify({ text: "/start" }),
+      headers: { "x-telegram-bot-api-secret-token": "s3cret" },
+    }),
+    { secretToken: "s3cret", env: { DB: "fake" } },
+  );
+  expect(ok.status).toBe(200);
+  expect(adapter.sent).toHaveLength(1); // already sent when fetch resolved
+});
+```
+
+`bot.fetch` doesn't register commands; `await bot.setCommands()` does, and then `adapter.commands`
+holds the menu. The `env` you pass is what `getEnv()` returns during the request.
+
+## Recipes
+
+### Rate limiting
+
+```ts
+import { rateLimit } from "@teactjs/plugins";
 
 const bot = createBot({
   component: App,
   adapter,
-  token: "test",
-  plugins: [storagePlugin({ driver: new MemoryAsyncDriver() })],
+  plugins: [rateLimit({ window: 60_000, limit: 2, onLimited: "Slow down" })],
 });
+await bot.start();
+
+for (let i = 0; i < 3; i++) await adapter.simulateMessage("1", "1", `msg ${i}`);
+expect(adapter.sent.at(-1)!.output.props.text).toBe("Slow down");
 ```
 
-## renderBot
+### Testing a middleware alone
 
-```tsx
-import { renderBot } from "@teactjs/testing";
+Middleware is a plain function. Call it with a hand-built context:
 
-const result = renderBot(MyComponent);
-result.output;
-result.findByType("tg-button");
-result.findText();
-result.rerender({ text: "/help" });
-result.unmount();
+```ts
+import { compose, isHalted, type BotContext } from "@teactjs/core";
+import { adminCommands } from "../src/middleware/adminCommands";
+
+const ctx: BotContext = {
+  chatId: "1", userId: "999", platform: "mock", text: "/ban 42",
+  user: { id: "999", platform: "mock" }, raw: {},
+};
+let reached = false;
+await compose([adminCommands])(ctx, async () => { reached = true; });
+expect(isHalted(ctx)).toBe(true);
+expect(reached).toBe(false);
 ```
 
-Use with Vitest or Jest. See [@teactjs/testing](/docs/packages/testing).
+### Asserting media and keyboards
+
+```ts
+const out = adapter.getLastSent()!.output;
+expect(out.type).toBe("tg-photo");
+expect(buttons(out).map((b) => b.props.text)).toEqual(["◦ Back", "▸ Buy"]);
+```
+
+## Gotchas
+
+<Callout type="warn" title="One started bot at a time">
+`bot.start()` stops the previously started bot in the same process (it is the hot-reload guard).
+Start one bot per test, and `await bot.stop()` in `afterEach`. `bot.fetch()` doesn't have this
+limit.
+</Callout>
+
+- **Await every simulate call.** Without `await`, assertions run before the render.
+- **Commits are asynchronous with `renderBot`.** Wait a tick (`setTimeout(r, 10)`) before reading
+  `output`.
+- **Messages send, button presses edit.** A new message gets a new `sent` entry; a callback normally
+  edits the last message, so it shows up in `edited`. Use a `latest()` helper that looks at both.
+- **`reset()` keeps `cleared` and `commands`.** Create a fresh adapter when you need a clean slate.
+- **`ctx.raw` is empty.** Code that reads grammY fields from `ctx.raw` needs its own fake context;
+  dispatch one through a small `MockAdapter` subclass that calls the registered handlers.
+
+## Related
+
+<Cards>
+  <Card title="@teactjs/testing" href="/docs/packages/testing" description="Package exports and types." />
+  <Card title="Storage" href="/docs/guides/storage" description="useStorage and the async cache under test." />
+  <Card title="Internationalization" href="/docs/guides/i18n" description="Locale detection and the language picker." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="bot.fetch() and the serverless path." />
+</Cards>

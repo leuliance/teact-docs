@@ -1,109 +1,297 @@
 ---
 title: Quick start
-description: Run your first Teact bot — token, entry file, createBot, and TelegramAdapter in a few steps.
+description: Go from a BotFather token to a running Teact bot with a router, a navigation button, a session-backed counter and a slash command, one step at a time.
 ---
 
-You need [Bun](https://bun.sh) and a bot token from [@BotFather](https://t.me/BotFather).
+This walkthrough builds a small bot from scratch: a home screen, a counter screen whose value survives between messages, and a `/help` command. Each step adds one idea and shows what the chat looks like afterwards. You need [Bun](https://bun.sh) 1.1 or newer and a Telegram account.
 
-## Step 1 — Install
+<Steps>
+<Step>
 
-**Scaffold a new project** (recommended) — pick a template and features interactively:
+### Get a token from BotFather
+
+Open [@BotFather](https://t.me/BotFather) in Telegram, send `/newbot`, and answer the two questions (a display name, then a username ending in `bot`). BotFather replies with a token like `123456789:ABCdef…`.
+
+<TelegramPreview
+  bot="BotFather"
+  user="/newbot"
+  text={"Done! Congratulations on your new bot.\n\nUse this token to access the HTTP API:\n123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"}
+  caption="Keep the token secret: anyone with it controls your bot"
+/>
+
+</Step>
+<Step>
+
+### Create the project
+
+Scaffold an empty project and skip the questions with `teact create`, or run `bun create teact my-bot` for the interactive wizard:
 
 ```bash
-bun create teact my-bot
+bunx @teactjs/cli create my-bot -t empty
 cd my-bot
-bun install
 ```
 
-**Or add Teact to an existing project:**
+Paste the token into the generated `.env`:
 
-```bash
-bun add @teactjs/core @teactjs/ui @teactjs/telegram react
+```bash title=".env"
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
 ```
 
-<Callout type="info">
-  Components come from **`@teactjs/ui`**; `createBot`, the router, and all hooks come from
-  **`@teactjs/core`**; the grammY-powered adapter is **`@teactjs/telegram`**. `react` is a peer
-  dependency. See [Installation](/docs/getting-started/installation) for npm/pnpm and details.
-</Callout>
+`createBot` reads `TELEGRAM_BOT_TOKEN` from the environment when you don't pass `token`, and the `.env` file in the project root is loaded automatically. See [Installation](/docs/getting-started/installation) for manual setup.
 
-## Step 2 — Token
+</Step>
+<Step>
 
-Create `.env` in the project root:
+### Render your first message
 
-```bash
-# .env
-TELEGRAM_BOT_TOKEN=your_token_here
-```
+Replace `src/index.tsx` with a single component. The `start` command has no handler or route, so `/start` simply renders the component:
 
-The token env var is always `TELEGRAM_BOT_TOKEN` — `createBot` reads `process.env.TELEGRAM_BOT_TOKEN` when no explicit `token` is passed.
-
-## Step 3 — Entry file
-
-A minimal bot wires a **root component** and the **Telegram adapter**:
-
-```tsx
-import { createBot, useState } from "@teactjs/core";
-import { Message, Button, InlineKeyboard } from "@teactjs/ui";
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { Message } from "@teactjs/ui";
 import { TelegramAdapter } from "@teactjs/telegram";
 
-function Counter() {
-  const [count, setCount] = useState(0);
-  return (
-    <Message text={`Count: ${count}`}>
-      <InlineKeyboard>
-        <Button text="-1" onClick={() => setCount((c) => c - 1)} />
-        <Button text="+1" onClick={() => setCount((c) => c + 1)} />
-      </InlineKeyboard>
-    </Message>
-  );
+function App() {
+  return <Message text="Hello from Teact!" />;
 }
 
-const bot = createBot({
-  component: Counter,
+export const bot = createBot({
+  component: App,
   adapter: new TelegramAdapter(),
-  token: process.env.TELEGRAM_BOT_TOKEN!,
+  commands: { start: { description: "Start the bot" } },
 });
 
 if (import.meta.main) bot.start();
 ```
 
-<Callout type="info">
-  Guarding `bot.start()` behind `import.meta.main` keeps long-running polling out of the module when the
-  same file is imported elsewhere (e.g. a serverless handler that calls `bot.fetch(request)` instead).
-</Callout>
-
-## Step 4 — Run
+Run it:
 
 ```bash
 bun dev
 ```
 
-Open Telegram, find your bot, send a message or `/start`. You should see the counter and inline buttons.
+`bun dev` runs `teact dev`, which restarts the bot whenever you save a file. Open your bot in Telegram and send `/start`:
 
-## Step 5 — Router (optional)
+<TelegramPreview bot="My Bot" user="/start" text="Hello from Teact!" />
 
-For multiple screens, swap `component` for a `router`. `createRouter(routes, options?)` maps paths to
-components:
+<Callout type="info">
+  `if (import.meta.main)` starts polling only when this file is the program being run. Tests and
+  serverless entry points can import `bot` without starting a second poller.
+</Callout>
 
-```tsx
+</Step>
+<Step>
+
+### Add a router and a button
+
+Real bots have several screens. Swap `component` for a `router`, and give the home screen a button that opens another route. `<Button route="…">` navigates without any handler code:
+
+```tsx title="src/index.tsx"
 import { createBot, createRouter } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 import { TelegramAdapter } from "@teactjs/telegram";
+
+function Home() {
+  return (
+    <Message text={"👋 Welcome!\n\nPick a screen:"}>
+      <InlineKeyboard>
+        <Button text="🔢 Counter" route="/counter" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+function Counter() {
+  return (
+    <Message text="Counter goes here.">
+      <InlineKeyboard>
+        <Button text="🏠 Home" route="/" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
 
 const router = createRouter({
   "/": Home,
-  "/about": About,
+  "/counter": Counter,
 });
 
-const bot = createBot({
+export const bot = createBot({
   router,
   adapter: new TelegramAdapter(),
-  token: process.env.TELEGRAM_BOT_TOKEN!,
+  commands: { start: { description: "Start the bot", route: "/" } },
+});
+
+if (import.meta.main) bot.start();
+```
+
+`component` and `router` are alternatives; pass one of them. The `/` route is the default screen.
+
+<TelegramPreview
+  bot="My Bot"
+  user="/start"
+  text={"👋 Welcome!\n\nPick a screen:"}
+  buttons={[["🔢 Counter"]]}
+/>
+
+Tapping **Counter** edits the same message into the counter screen instead of posting a new one.
+
+</Step>
+<Step>
+
+### Keep a counter in the session
+
+`useState` would work for the count, but it lives in memory for the current screen only: returning to `/counter` with a route button resets it. Store it in the chat's session instead with `useSession`, and it survives navigation and new messages:
+
+```tsx title="src/pages/Counter.tsx"
+import { useSession } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+type CounterSession = { count?: number };
+
+export function Counter() {
+  const [session, setSession] = useSession<CounterSession>();
+  const count = session.count ?? 0;
+
+  return (
+    <Message text={`🔢 Count: ${count}`}>
+      <InlineKeyboard columns={2}>
+        <Button text="−1" onClick={() => setSession({ count: count - 1 })} />
+        <Button text="+1" onClick={() => setSession({ count: count + 1 })} />
+        <Button text="Reset" onClick={() => setSession({ count: 0 })} />
+        <Button text="🏠 Home" route="/" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+```
+
+Import it in `src/index.tsx` with `import { Counter } from "./pages/Counter";` and remove the placeholder. `columns={2}` lays the four buttons out in two rows.
+
+<TelegramPreview
+  bot="My Bot"
+  text="🔢 Count: 3"
+  buttons={[["−1", "+1"], ["Reset", "🏠 Home"]]}
+  edited
+/>
+
+`setSession` merges the patch into the session and writes it to the session store. The default store is in memory, so the count resets when the process restarts. For a count that survives restarts, pass a durable store; see [Storage](/docs/guides/storage).
+
+</Step>
+<Step>
+
+### Add commands
+
+Commands go in `createBot({ commands })`. Each needs a `description` (shown in Telegram's command menu) and either a `route` to open or a `handler` to run. A string handler sends that text; a function gets `args`, `reply` and user info:
+
+```tsx title="src/index.tsx"
+export const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  commands: {
+    start: { description: "Start the bot", route: "/" },
+    counter: { description: "Open the counter", route: "/counter" },
+    help: {
+      description: "Show help",
+      handler: ({ reply }) =>
+        reply("Tap a button or use /counter.", {
+          buttons: [[{ text: "🔢 Counter", route: "/counter" }]],
+        }),
+    },
+  },
 });
 ```
 
-`component` and `router` are mutually exclusive. See [Router](/docs/guides/router) for guards, params, and navigation.
+`bot.start()` registers the menu with Telegram, so after a restart the commands appear when you type `/`:
 
-## Step 6 — Bot commands (optional)
+<TelegramPreview
+  bot="My Bot"
+  user="/help"
+  text="Tap a button or use /counter."
+  buttons={[["🔢 Counter"]]}
+/>
 
-Register Telegram menu commands and deep links via `createBot({ commands: { ... } })`. See [Commands](/docs/guides/commands).
+</Step>
+<Step>
+
+### Check your setup
+
+If the bot doesn't answer, run the doctor. It validates your Bun version, project files, token and webhook state:
+
+```bash
+bunx teact doctor
+```
+
+`bunx` runs the project's local `teact` binary; plain `teact doctor` works too if the CLI is installed globally.
+
+A healthy project ends with `All checks passed!`. Anything else comes with a suggested fix; see [Troubleshooting](/docs/getting-started/troubleshooting).
+
+</Step>
+</Steps>
+
+## The finished bot
+
+```tsx title="src/index.tsx"
+import { createBot, createRouter } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { Counter } from "./pages/Counter";
+
+function Home() {
+  return (
+    <Message text={"👋 Welcome!\n\nPick a screen:"}>
+      <InlineKeyboard>
+        <Button text="🔢 Counter" route="/counter" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+const router = createRouter({
+  "/": Home,
+  "/counter": Counter,
+});
+
+export const bot = createBot({
+  router,
+  adapter: new TelegramAdapter(),
+  commands: {
+    start: { description: "Start the bot", route: "/" },
+    counter: { description: "Open the counter", route: "/counter" },
+    help: {
+      description: "Show help",
+      handler: ({ reply }) =>
+        reply("Tap a button or use /counter.", {
+          buttons: [[{ text: "🔢 Counter", route: "/counter" }]],
+        }),
+    },
+  },
+});
+
+if (import.meta.main) bot.start();
+```
+
+## What just happened
+
+- **One root per chat.** Each chat gets its own React tree, so two users see their own counters.
+- **Buttons edit, messages send.** A button press re-renders and edits the message it lives on. A new message from the user makes the next screen arrive as a new message.
+- **Commands reset the screen.** `/start`, `/counter` and route buttons rebuild the chat's tree from the target route, which is why `useState` resets there and `useSession` doesn't.
+- **`onClick` handlers live in memory.** They work while the process runs. Route buttons encode their target in the button itself, so they keep working after a restart.
+
+## What to try next
+
+- **Ask a question.** Collect input step by step with [`useConversation` or `useForm`](/docs/guides/conversations).
+- **Guard a route.** Add `beforeLoad` to `/counter` to require a session flag; see [Router](/docs/guides/router).
+- **Persist across restarts.** Add `storagePlugin` and a durable session store; see [Storage](/docs/guides/storage) and [Databases](/docs/guides/databases).
+- **Format text.** Use `<Bold>`, `<Italic>` and `<Code>` inside `<Message>`; see [Components](/docs/guides/components).
+- **Write a test.** Drive the bot with `MockAdapter`; see [Testing](/docs/guides/testing).
+- **Deploy.** Run it with polling on a server, or on Cloudflare Workers with `bot.fetch()`; see [Deployment](/docs/guides/deployment).
+
+## Related
+
+<Cards>
+  <Card title="Router" href="/docs/guides/router" description="Params, guards, navigation modes and co-located commands." />
+  <Card title="Commands" href="/docs/guides/commands" description="Handlers, deep links and useCommand." />
+  <Card title="Hooks" href="/docs/guides/hooks" description="useSession, useNavigate, useBot and the rest." />
+  <Card title="Configuration" href="/docs/getting-started/configuration" description="teact.config.ts and every createBot option." />
+</Cards>

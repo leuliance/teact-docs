@@ -1,34 +1,135 @@
 ---
 title: Internationalization (i18n)
-description: Translate your bot, detect each user's language from Telegram, persist their choice, and format numbers and dates per locale.
+description: Translate your bot, detect each user's language from Telegram, persist their choice, offer a language picker, and format numbers, dates and plurals per locale.
 ---
 
-Teact's i18n layer lives in **`@teactjs/core`** (`createI18n`, `useLocale`), and
-[`@teactjs/i18n`](/docs/packages/i18n) builds on it with a plugin, built-in UI strings in 19
-languages, a `<LanguagePicker />` and `Intl` formatting hooks.
+Teact's i18n layer lives in **`@teactjs/core`** (`createI18n`, `useLocale`), built on i18next.
+[`@teactjs/i18n`](/docs/packages/i18n) adds a plugin, built-in UI strings in 19 languages, a
+`<LanguagePicker />`, typed keys and `Intl` formatting hooks. Every chat gets its own locale: detected
+from the user's Telegram language, switchable at any time, and saved in the session.
 
-## Setup with the plugin (recommended)
+## First example
+
+```npm
+npm i @teactjs/i18n
+```
+
+```json title="src/locales/en.json"
+{
+  "home": {
+    "title": "Hello, {{name}}! 👋",
+    "cart": "You have {{count}} items in your cart."
+  },
+  "language": "🌐 Language"
+}
+```
+
+```json title="src/locales/de.json"
+{
+  "home": {
+    "title": "Hallo, {{name}}! 👋",
+    "cart": "Du hast {{count}} Artikel im Warenkorb."
+  },
+  "language": "🌐 Sprache"
+}
+```
+
+```tsx title="src/index.tsx"
+import { createBot, createRouter, useBot } from "@teactjs/core";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { i18nPlugin, useLocale, LanguagePicker } from "@teactjs/i18n";
+import en from "./locales/en.json";
+import de from "./locales/de.json";
+
+function Home() {
+  const { t } = useLocale();
+  const { user } = useBot();
+  return (
+    <Message text={`${t("home.title", { name: user.firstName })}\n${t("home.cart", { count: 3 })}`}>
+      <InlineKeyboard>
+        <Button text={t("language")} route="/language" />
+      </InlineKeyboard>
+    </Message>
+  );
+}
+
+function Language() {
+  return <LanguagePicker columns={2} />;
+}
+
+export const bot = createBot({
+  router: createRouter({ "/": Home, "/language": Language }),
+  adapter: new TelegramAdapter(),
+  plugins: [i18nPlugin({ locales: { en, de }, defaultLocale: "en" })],
+});
+
+if (import.meta.main) bot.start();
+```
+
+A user whose Telegram app is set to German sees the German text on their first `/start`. Tapping
+"Sprache" opens the picker; picking a language edits the picker into that language, marks the new
+choice and remembers it for every later screen.
+
+<TelegramPreview
+  bot="Shop Bot"
+  text={"Choose your language"}
+  buttons={[["✓ 🇬🇧 English", "🇩🇪 Deutsch"]]}
+  edited
+/>
+
+## createI18n or i18nPlugin
+
+Both produce the same runtime behaviour (detection, persistence, `useLocale`). The plugin is a
+convenience layer over `createI18n`.
+
+| | `createI18n` (`@teactjs/core`) | `i18nPlugin` (`@teactjs/i18n`) |
+| --- | --- | --- |
+| Registered with | `createBot({ providers: i18n.Provider })` | `plugins: [i18nPlugin(…)]` or `teact.config.ts` |
+| Resources | `{ en: { translation: {…} } }` (i18next shape) | `locales: { en: {…} }` (plain objects), or `resources` |
+| `defaultLocale` | required | optional: `"en"` if present, else the first locale |
+| Built-in `teact.*` strings | no | yes (`packs`, default on) |
+| DI service | — | the i18next instance as `useService("i18n")` |
+| Extra package | no | yes |
+
+### With the plugin
 
 ```ts title="teact.config.ts"
 import { defineConfig } from "@teactjs/core";
 import { i18nPlugin } from "@teactjs/i18n";
-import en from "./locales/en.json";
-import am from "./locales/am.json";
+import en from "./src/locales/en.json";
+import am from "./src/locales/am.json";
 
 export default defineConfig({
   plugins: [i18nPlugin({ locales: { en, am }, defaultLocale: "en" })],
 });
 ```
 
-`locales` takes plain translation objects. On edge runtimes, pass the plugin to
-`createBot({ plugins })` instead — `teact.config.ts` is not loaded there.
+On edge runtimes `teact.config.ts` isn't loaded: pass the plugin to `createBot({ plugins })` instead.
 
-## Setup with `createI18n`
+<TypeTable
+  type={{
+    locales: { type: 'Record<string, Record<string, any>>', description: 'Translations keyed by locale, as plain objects.' },
+    resources: { type: 'Record<string, I18nLocaleResource>', description: 'i18next-style resources ({ en: { translation: {...} } }). Merged with locales.' },
+    defaultLocale: { type: 'string', description: 'Used when nothing is persisted or detected. A code without resources logs a warning and falls back.', default: '"en" if present, else the first locale' },
+    fallbackLocale: { type: 'string', description: 'Locale used for missing keys.', default: 'defaultLocale' },
+    detect: { type: 'boolean', description: "Detect the locale from the user's Telegram language_code.", default: 'true' },
+    persist: { type: 'boolean', description: 'Save the chosen locale in the chat session.', default: 'true' },
+    sessionKey: { type: 'string', description: 'Session key for the persisted locale.', default: '"__locale"' },
+    packs: { type: 'boolean | Record<string, Partial<TeactMessages>>', description: 'Built-in teact.* UI strings: true merges them, false disables them, an object adds or overrides packs per locale.', default: 'true' },
+    onLocaleChange: { type: '(locale: string, previous: string) => void', description: 'Called when a chat switches to a different locale.' },
+  }}
+/>
 
-Without the extra package, create an instance and pass its Provider to `createBot`. Each locale
-needs a `translation` object (the i18next convention):
+`i18nPlugin` throws if there are no locales at all. The returned plugin also exposes the instance as
+`plugin.i18n` (`{ Provider, instance, availableLocales, resolveLocale }`).
 
-```ts
+### With createI18n
+
+Without the extra package, create an instance and pass its Provider to `createBot`. Each locale needs
+a `translation` object:
+
+```ts title="src/i18n.ts"
 import { createI18n } from "@teactjs/core";
 
 export const i18n = createI18n({
@@ -37,52 +138,64 @@ export const i18n = createI18n({
     en: { translation: { greeting: "Hello {{name}}!" } },
     am: { translation: { greeting: "ሰላም {{name}}!" } },
   },
-  // detect: true,   // use Telegram's language_code (default)
-  // persist: true,  // remember the choice in the session (default)
+  // detect: true,          // use Telegram's language_code (default)
+  // persist: true,         // remember the choice in the session (default)
+  // sessionKey: "__locale",
+  // fallbackLocale: "en",
+  // onLocaleChange: (next, prev) => {},
 });
-
-createBot({ component: App, providers: i18n.Provider });
 ```
 
-Both setups share the same detection and persistence behaviour.
+```ts
+createBot({ component: App, adapter, providers: i18n.Provider });
+```
 
 ## How the locale is chosen
 
-For every chat, the locale is resolved in this order:
+When a chat's screen is first rendered (on the first update, and again after a command or route
+button resets it), the locale is resolved in this order:
 
-1. **Persisted choice** — the locale stored in the session under `__locale` (when `persist` is on).
-2. **Telegram `language_code`** — the sender's language reported by Telegram (available as
-   `ctx.user.languageCode`), normalized and matched against your locales (when `detect` is on).
+1. **Persisted choice**: the locale stored in the session under `__locale` (when `persist` is on).
+2. **Telegram `language_code`**: the sender's language, matched against your locales with
+   `detectLocale` (when `detect` is on).
 3. **`defaultLocale`**.
 
+On later updates, a press of a language-picker button wins over everything, and a persisted value
+that changed elsewhere (another serverless instance, another handler) is adopted on the next render.
+
+The language code comes from `getUserLanguageCode(ctx)`, which reads `ctx.user.languageCode` and
+falls back to the raw Telegram update (`from.language_code`).
+
 Matching is done by `detectLocale(code, available)`: it tries the exact tag, then shorter prefixes,
-then any regional variant of the base language, case-insensitively.
+then any regional variant of the base language, case-insensitively, and returns the spelling used in
+`available`.
 
 ```ts
-import { detectLocale } from "@teactjs/core";
+import { detectLocale, normalizeLocale } from "@teactjs/core";
 
 detectLocale("pt-br", ["en", "pt"]);    // "pt"
 detectLocale("en_US", ["en-US", "en"]); // "en-US"
 detectLocale("pt", ["en", "pt-BR"]);    // "pt-BR"
 detectLocale("xx", ["en"]);             // undefined
-```
 
-`normalizeLocale(code)` and `getUserLanguageCode(ctx)` are exported too, for use in middleware or
-command handlers.
+normalizeLocale("pt_br");      // "pt-BR"
+normalizeLocale("ZH-hans-cn"); // "zh-Hans-CN"
+```
 
 ## useLocale
 
-`useLocale()` returns `{ t, locale, setLocale, availableLocales }`:
+`useLocale()` returns `{ t, locale, setLocale, availableLocales }`. `@teactjs/i18n` re-exports it, so
+one import is enough.
 
-- `t(key, vars?)` — look up `key` in the active locale and interpolate `{{vars}}`.
-- `locale` — the current locale.
-- `setLocale(next)` — switch the locale. Unknown codes are ignored with a warning; matching is
-  case-insensitive. With `persist` on, the choice is written to the session and the write is awaited
-  before the update finishes.
-- `availableLocales` — locales that have resources.
+| Member | Description |
+| ------ | ----------- |
+| `t(key, vars?)` | Look up `key` (dotted paths for nested objects) in the active locale and interpolate `{{vars}}`. Missing keys fall back to `fallbackLocale`. |
+| `locale` | The chat's current locale code. |
+| `setLocale(code)` | Switch locale. The code must match an available locale after normalization (`"PT_br"` finds `"pt-BR"`); unknown codes are ignored with a warning. |
+| `availableLocales` | Locales that have resources, in declaration order. |
 
 ```tsx
-import { useLocale } from "@teactjs/core";
+import { useLocale } from "@teactjs/i18n";
 import { Message, InlineKeyboard, Button } from "@teactjs/ui";
 
 function Greeting() {
@@ -100,70 +213,272 @@ function Greeting() {
 }
 ```
 
-<Callout type="warn">
-Persistence uses the session. With the default in-memory session store the choice is lost on
-restart and isn't shared between serverless isolates — use a durable store from the
-[Databases guide](/docs/guides/databases).
+## Persistence
+
+With `persist` on (the default), an explicit choice (`setLocale` or a picker button) is written to the
+session under `sessionKey` during the same update, and the write is awaited before the update
+finishes. Detected locales are not written: a user who never picks a language keeps following their
+Telegram setting.
+
+<Callout type="warn" title="Use a durable session store">
+With the default in-memory session store the choice is lost on restart and isn't shared between
+serverless isolates. Use a store from the [Databases guide](/docs/guides/databases#durable-sessions).
 </Callout>
+
+To read the choice outside React (a middleware, a report), read `session.__locale` from your store or
+use the `LOCALE_SESSION_KEY` constant.
 
 ## Language picker
 
-`@teactjs/i18n` ships `<LanguagePicker />`, an inline keyboard of your locales with native names and
-flags:
+`<LanguagePicker />` renders one button per available locale (flag and native name), marks the
+current one, and handles the switch itself.
 
 ```tsx
 import { LanguagePicker } from "@teactjs/i18n";
 
-function LanguageScreen() {
-  return <LanguagePicker columns={2} />;
-}
+// A full message
+<LanguagePicker columns={3} locales={["en", "de", "am"]} />
+
+// Only the keyboard, inside your own message
+<Message text={t("settings.title")}>
+  <LanguagePicker keyboardOnly />
+</Message>
 ```
 
-Its buttons use `__teact_locale:<code>` callback data that the i18n Provider handles during render,
-so the message is edited straight into the new language and it works on serverless (no in-memory
-click handlers). Build your own buttons with `localeCallbackData(code)`:
+<TelegramPreview
+  bot="Shop Bot"
+  user="/language"
+  text={"Choose your language"}
+  buttons={[["✓ 🇬🇧 English", "🇩🇪 Deutsch", "🇪🇹 አማርኛ"]]}
+/>
+
+<TypeTable
+  type={{
+    title: { type: 'string', description: 'Message text above the buttons.', default: 't("teact.selectLanguage")' },
+    columns: { type: 'number', description: 'Buttons per row.', default: '2' },
+    locales: { type: 'string[]', description: 'Restrict and order the locales shown. Unknown codes are skipped.', default: 'every available locale' },
+    onChange: { type: '(locale: string) => void', description: 'Called once after the user picked a locale (even the current one).' },
+    showFlags: { type: 'boolean', description: 'Show flag emojis.', default: 'true' },
+    currentMark: { type: 'string', description: "Prefix for the current locale's button.", default: '"✓ "' },
+    labels: { type: 'Partial<Record<string, Partial<Omit<LocaleInfo, "code">>>>', description: 'Override names or flags per locale, e.g. { sw: { flag: "🇹🇿" } }.' },
+    renderLabel: { type: '(info: LocaleInfo, isCurrent: boolean) => string', description: 'Build each label yourself. Wins over showFlags and labels.' },
+    keyboardOnly: { type: 'boolean', description: 'Render only the <InlineKeyboard>, without a <Message>.', default: 'false' },
+  }}
+/>
+
+The buttons carry `__teact_locale:<code>` callback data that the i18n Provider handles during
+render. The message is edited straight into the new language, and it works on serverless because no
+in-memory click handler is involved. Build your own buttons with `localeCallbackData(code)`:
 
 ```tsx
-import { localeCallbackData } from "@teactjs/core";
+import { localeCallbackData } from "@teactjs/i18n";
 
 <Button text="🇫🇷 Français" onClick={localeCallbackData("fr")} />;
 ```
 
-## Built-in UI strings
+Locale metadata is available too: `useLocaleInfo()` returns `{ code, nativeName, englishName, flag,
+dir }` for the chat's locale, `getLocaleInfo(code)` for any code, and `getTextDirection(code)` returns
+`"ltr"` or `"rtl"`.
 
-With the plugin, common strings are available in every shipped language under `teact.*`:
-`t("teact.cancel")`, `t("teact.back")`, `t("teact.pageOf", { page, total })`, and more. Your own keys
-always win, so you can override any of them. See the
-[package reference](/docs/packages/i18n#built-in-packs) for the full list.
+## Formatting with useFormat
 
-## Formatting
-
-`useFormat()` returns `Intl` helpers bound to the chat's locale:
+`useFormat(options?)` returns `Intl` helpers bound to the chat's locale. Outside components use
+`createFormatter(locale, options)`.
 
 ```tsx
 import { useFormat } from "@teactjs/i18n";
 
-const f = useFormat({ currency: "ETB" });
-f.currency(1250);                                         // locale-aware currency
-f.date(new Date());                                       // e.g. "Jan 15, 2026"
-f.relativeTime(createdAt);                                // e.g. "3 hours ago"
-f.plural(n, { one: "{{count}} item", other: "{{count}} items" });
+function Order({ total, items, placedAt }: { total: number; items: number; placedAt: Date }) {
+  const f = useFormat({ currency: "EUR", timeZone: "Europe/Berlin" });
+  return (
+    <Message
+      text={`${f.plural(items, { one: "{{count}} item", other: "{{count}} items" })} · ${f.currency(total)} · ${f.relativeTime(placedAt)}`}
+    />
+  );
+}
 ```
 
-Outside components, use `createFormatter(locale, options)`.
+| Helper | Example | `en` | `de` |
+| ------ | ------- | ---- | ---- |
+| `number(value, opts?)` | `number(1234.5)` | `1,234.5` | `1.234,5` |
+| `currency(value, code?, opts?)` | `currency(9.99, "EUR")` | `€9.99` | `9,99 €` |
+| `percent(value, opts?)` | `percent(0.25)` | `25%` | `25 %` |
+| `date(value, opts?)` | `date(new Date(2026, 0, 15))` | `Jan 15, 2026` | `15.01.2026` |
+| `time(value, opts?)` | `time(new Date(2026, 0, 15, 15, 30))` | `3:30 PM` | `15:30` |
+| `dateTime(value, opts?)` | same date | `Jan 15, 2026, 3:30 PM` | `15.01.2026, 15:30` |
+| `relativeTime(n, unit)` | `relativeTime(-1, "day")` | `yesterday` | `gestern` |
+| `relativeTime(date)` | a date 2 hours ahead | `in 2 hours` | `in 2 Stunden` |
+| `list(items, opts?)` | `list(["a", "b", "c"])` | `a, b, and c` | `a, b und c` |
+| `plural(count, forms)` | `plural(3, { one: "{{count}} item", other: "{{count}} items" })` | `3 items` | (your forms) |
+| `pluralCategory(count)` | `pluralCategory(1)` | `one` | `one` |
+
+<TypeTable
+  type={{
+    currency: { type: 'string', description: 'Default ISO 4217 currency for currency() when none is passed.', default: '"USD"' },
+    timeZone: { type: 'string', description: 'IANA time zone for date, time and dateTime, e.g. "Africa/Addis_Ababa".', default: "the runtime's zone" },
+  }}
+/>
+
+Details:
+
+- `date`, `time` and `dateTime` accept a `Date`, a timestamp or a date string. Defaults are
+  `dateStyle: "medium"`, `timeStyle: "short"`, and both for `dateTime`. Passing your own options
+  replaces the defaults.
+- `relativeTime` uses `numeric: "auto"` ("yesterday", not "1 day ago"). Given a `Date`, it picks the
+  largest fitting unit from year down to second.
+- `plural` picks the form with `Intl.PluralRules` for the locale, falls back to `other`, and replaces
+  `{{count}}` with the locale-formatted number. Languages with more categories (`few`, `many`) can
+  supply them.
+- Exact output can vary slightly between runtimes (for example the space before "PM" or "€"), as it
+  comes from the runtime's `Intl` data.
+
+## Built-in UI strings (packs)
+
+With the plugin, common strings are available in every shipped language under `teact.*`. Your own
+keys always win, so you can override any of them.
+
+```tsx
+t("teact.cancel");                         // "Cancel" / "Abbrechen" / "ሰርዝ"
+t("teact.pageOf", { page: 2, total: 5 });  // "Page 2 of 5"
+```
+
+Keys: `yes`, `no`, `ok`, `back`, `next`, `previous`, `cancel`, `done`, `confirm`, `close`, `save`,
+`edit`, `delete`, `skip`, `loading`, `error`, `tryAgain`, `menu`, `settings`, `language`, `help`,
+`search`, `pageOf`, `selectLanguage`, `languageChanged`, `noResults`, `areYouSure`.
+
+Shipped languages (`packLocales`): `en`, `am`, `ar`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ja`, `ko`,
+`nl`, `pl`, `pt`, `ru`, `sw`, `tr`, `uk`, `zh`. A locale of yours is matched to a pack with
+`detectLocale`, so `pt-BR` gets the `pt` pack.
+
+```ts
+i18nPlugin({
+  locales: { en, de },
+  packs: {
+    en: { cancel: "Never mind" },          // override one built-in string
+    de: { cancel: "Lieber nicht" },
+  },
+});
+
+i18nPlugin({ locales: { en, de }, packs: false }); // no teact.* keys
+```
+
+If you pass no locales at all and keep packs on, every pack locale becomes available, which is handy
+for a bot that only uses built-in strings.
+
+## Typed keys
+
+`defineLocales` checks at compile time that every locale has exactly the keys of a base locale, and
+`useT` gives `t` key autocompletion:
+
+```ts title="src/locales/index.ts"
+import { defineLocales } from "@teactjs/i18n";
+
+const en = { greeting: "Hello", menu: { title: "Menu" } };
+
+export const locales = defineLocales<typeof en>()({
+  en,
+  am: { greeting: "ሰላም", menu: { title: "ምናሌ" } },
+  // fr: { greeting: "Bonjour" },   // ✗ type error: property 'menu' is missing
+});
+export type Messages = typeof en;
+```
+
+```tsx
+import { useT } from "@teactjs/i18n";
+import type { Messages } from "./locales";
+
+const t = useT<Messages>();
+t("menu.title");   // ✓
+t("menu.titel");   // ✗ type error
+t("teact.cancel"); // built-in pack keys are always allowed
+```
+
+Call `defineLocales` twice (`defineLocales<Base>()(locales)`) so TypeScript can infer the locale codes
+while checking the shape.
+
+## Recipes
+
+### Localized command replies
+
+Inline command handlers don't render through the React tree, so use the i18next instance directly.
+They can't see the persisted choice; they use the Telegram language:
+
+```ts title="src/index.tsx"
+import { detectLocale } from "@teactjs/core";
+import { i18nPlugin } from "@teactjs/i18n";
+
+const i18n = i18nPlugin({ locales: { en, de } });
+
+createBot({
+  // ...
+  plugins: [i18n],
+  commands: {
+    help: {
+      description: "Help",
+      handler: async (ctx) => {
+        const locale =
+          detectLocale(ctx.raw?.from?.language_code, i18n.i18n.availableLocales) ?? "en";
+        await ctx.reply(i18n.i18n.instance.getFixedT(locale)("help.text"));
+      },
+    },
+  },
+});
+```
+
+For screens that should follow the user's saved choice, use a route command (`route: "/help"`) and
+`useLocale()` in the component.
+
+### Right-to-left languages
+
+```tsx
+import { useLocaleInfo } from "@teactjs/i18n";
+
+const { dir } = useLocaleInfo();
+const arrow = dir === "rtl" ? "←" : "→";
+```
 
 ## Testing
 
-Simulate a user's Telegram language with `MockAdapter`:
+Simulate the sender's Telegram language with `MockAdapter`. `languageCode` lands on
+`ctx.user.languageCode`, which is what detection reads:
 
-```ts
-await adapter.simulateMessage("1", "1", "/start", { languageCode: "am" });
+```ts title="tests/i18n.test.tsx"
+import { test, expect } from "bun:test";
+import { createBot } from "@teactjs/core";
+import { MockAdapter } from "@teactjs/testing";
+import { i18nPlugin } from "@teactjs/i18n";
+import { Home } from "../src/pages/Home";
+import en from "../src/locales/en.json";
+import de from "../src/locales/de.json";
+
+test("German users get German text", async () => {
+  const adapter = new MockAdapter();
+  const bot = createBot({ component: Home, adapter, plugins: [i18nPlugin({ locales: { en, de } })] });
+  await bot.start();
+
+  await adapter.simulateMessage("1", "1", "/start", { languageCode: "de" });
+  expect(adapter.getLastSent()!.output.props.text).toContain("Hallo");
+
+  await adapter.simulateMessage("2", "2", "/start", { languageCode: "fr" }); // no fr → default
+  expect(adapter.getLastSent()!.output.props.text).toContain("Hello");
+
+  await bot.stop();
+});
 ```
 
-See [Testing](/docs/guides/testing).
+For pure functions, `createFormatter("de").number(1234.5)` and `detectLocale(...)` need no bot at all.
+See [Testing](/docs/guides/testing#i18n-via-languagecode).
 
 ## Scaffolding
 
 New projects always include i18n (locale JSON files, and a `/language` route with a `LanguagePage` in
-router templates). Run `teact add i18n` to
-install `@teactjs/i18n` in an existing project.
+router templates). Run `teact add i18n` to install `@teactjs/i18n` in an existing project.
+
+## Related
+
+<Cards>
+  <Card title="@teactjs/i18n" href="/docs/packages/i18n" description="Every export, pack and metadata entry." />
+  <Card title="Databases" href="/docs/guides/databases" description="Durable session stores so language choices persist." />
+  <Card title="Testing" href="/docs/guides/testing" description="MockAdapter with languageCode." />
+  <Card title="Components" href="/docs/guides/components" description="Message, InlineKeyboard and Button." />
+</Cards>

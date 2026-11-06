@@ -1,36 +1,312 @@
 ---
 title: Databases
-description: Choose a storage backend, use async database drivers with useStorage, make sessions durable, and write your own driver.
+description: Pick a storage backend per runtime, wire Redis, Postgres, SQLite, MongoDB, D1 or KV into useStorage and sessions, use TTL and atomic counters, and write your own driver.
 ---
 
 `useStorage` and the session store work with any backend that implements Teact's driver interface.
-Teact ships drivers for Redis, Postgres, SQLite, MongoDB and Cloudflare KV/D1; each package provides
+Teact ships drivers for Redis, Postgres, SQLite, MongoDB and Cloudflare KV/D1. Each package provides
 a **storage driver** (for `storagePlugin`), a **session store** (for `createBot({ session })`) and,
 where useful, a **plugin + hook** that gives components the raw client.
 
+Read [Storage](/docs/guides/storage) first if you haven't: it explains `useStorage`, the per-update
+cache and the difference between sync and async drivers.
+
 ## Choosing a backend
 
-| Backend | Package | Long-running | Edge / serverless | Driver | TTL |
-| ------- | ------- | ------------ | ----------------- | ------ | --- |
-| Memory | `@teactjs/storage` | ✓ (lost on restart) | ✗ (per isolate) | sync | — |
-| File (JSON) | `@teactjs/storage` | ✓ | ✗ (no filesystem) | sync | — |
-| SQLite | [`@teactjs/sqlite`](/docs/packages/sqlite) | ✓ (`bun:sqlite`, `better-sqlite3`) | ✗ | sync | ✓ |
-| Redis | [`@teactjs/redis`](/docs/packages/redis) | ✓ (ioredis, node-redis, Bun) | ✓ with `@upstash/redis` (HTTP) | async | ✓ native (`PX`) |
-| Postgres | [`@teactjs/postgres`](/docs/packages/postgres) | ✓ (pg, postgres.js, PGlite) | ✓ with Neon `neon()` (HTTP) | async | ✓ (`expires_at`) |
-| MongoDB | [`@teactjs/mongodb`](/docs/packages/mongodb) | ✓ | Node serverless (Lambda, Vercel Node); limited on Workers | async | ✓ (TTL index) |
-| Cloudflare D1 | [`@teactjs/cloudflare`](/docs/packages/cloudflare) | ✗ | ✓ Workers (strongly consistent) | async | ✓ (exact) |
-| Cloudflare KV | [`@teactjs/cloudflare`](/docs/packages/cloudflare) | ✗ | ✓ Workers (eventually consistent) | async | ✓ (min 60s) |
+| Backend | Package | Runtimes | Kind | TTL | Atomic `incr` |
+| ------- | ------- | -------- | ---- | --- | ------------- |
+| Memory | `@teactjs/storage` | Any (lost on restart, one copy per isolate) | sync | — | — |
+| File (JSON) | `@teactjs/storage` | Node, Bun (needs a filesystem) | sync | — | — |
+| SQLite | [`@teactjs/sqlite`](/docs/packages/sqlite) | Bun (`bun:sqlite`), Node (`better-sqlite3`) | sync (`asAsync()` view) | ✓ `expires_at` | ✓ `UPSERT … RETURNING` |
+| Redis | [`@teactjs/redis`](/docs/packages/redis) | Node, Bun (ioredis, node-redis, Bun); any fetch runtime with `@upstash/redis` | async | ✓ native `PX` | ✓ Lua script |
+| Postgres | [`@teactjs/postgres`](/docs/packages/postgres) | Node, Bun (pg, postgres.js, PGlite); any fetch runtime with Neon `neon()` | async | ✓ `expires_at` | ✓ `UPSERT … RETURNING` |
+| MongoDB | [`@teactjs/mongodb`](/docs/packages/mongodb) | Node, Bun, Node serverless (Lambda, Vercel Node); limited on Workers | async | ✓ TTL index | ✓ `$inc` |
+| Cloudflare D1 | [`@teactjs/cloudflare`](/docs/packages/cloudflare) | Cloudflare Workers (strongly consistent) | async | ✓ exact | ✓ `UPSERT … RETURNING` |
+| Cloudflare KV | [`@teactjs/cloudflare`](/docs/packages/cloudflare) | Cloudflare Workers (eventually consistent) | async | ✓ minimum 60 s | ✗ |
 
 Rules of thumb:
 
-- **One process on a VM or container** — SQLite. No server to run, synchronous reads.
-- **Several instances, or you already run Redis/Postgres** — Redis or Postgres.
-- **Cloudflare Workers** — D1 for state and sessions; KV only for rarely-changing settings or caches.
-- **Vercel Edge / Deno / other fetch-only runtimes** — Upstash Redis or Neon Postgres over HTTP.
+- **One process on a VM or container**: SQLite. No server to run, synchronous reads.
+- **Several instances, or you already run Redis/Postgres**: Redis or Postgres.
+- **Cloudflare Workers**: D1 for state and sessions; KV only for rarely-changing settings or caches.
+- **Vercel Edge, Deno and other fetch-only runtimes**: Upstash Redis or Neon Postgres over HTTP.
 
 `teact create my-bot --db sqlite|redis|postgres` scaffolds a project with the driver already wired,
 and `teact add <db> --client <client>` adds one to an existing project. See the
 [CLI reference](/docs/packages/cli).
+
+## Setup per database
+
+Each tab shows the install command, the client variants and a complete `createBot` with storage and
+durable sessions on the same backend.
+
+<Tabs items={['Redis', 'Postgres', 'SQLite', 'MongoDB', 'D1', 'KV']}>
+<Tab value="Redis">
+
+```npm
+npm i @teactjs/redis @teactjs/storage ioredis
+```
+
+`RedisDriver` detects the client type. Install one client (skip it on Bun if you use the built-in
+one):
+
+```ts tab="ioredis"
+import Redis from "ioredis";
+export const redis = new Redis(process.env.REDIS_URL!);
+```
+
+```ts tab="node-redis"
+import { createClient } from "redis";
+// node-redis must be connected before the first update
+export const redis = await createClient({ url: process.env.REDIS_URL }).connect();
+```
+
+```ts tab="Bun"
+import { redis } from "bun"; // reads REDIS_URL
+// or: new RedisClient("redis://localhost:6379")
+export { redis };
+```
+
+```ts tab="Upstash (edge)"
+import { Redis } from "@upstash/redis";
+export const redis = Redis.fromEnv(); // HTTP, works on Workers and Vercel Edge
+```
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { RedisDriver, redisSessionStore } from "@teactjs/redis";
+import { redis } from "./redis";
+import { App } from "./App";
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new RedisDriver({ client: redis, namespace: "mybot:" }) })],
+  session: { store: redisSessionStore({ client: redis, namespace: "mybot:", ttl: 30 * 24 * 3600_000 }) },
+});
+
+if (import.meta.main) bot.start();
+```
+
+`namespace` prefixes every key so several bots can share one database. Don't set ioredis'
+`keyPrefix` on a client you pass in: it isn't applied to `SCAN`, so prefix queries would miss your
+keys. If auto-detection guesses wrong for a wrapped client, use `fromIoredis`, `fromNodeRedis`,
+`fromBunRedis` or `fromUpstash`, or pass `clientKind`.
+
+</Tab>
+<Tab value="Postgres">
+
+```npm
+npm i @teactjs/postgres @teactjs/storage pg
+```
+
+Any Postgres works, including Supabase, Neon, Vercel Postgres, RDS and PGlite. Pick a client:
+
+```ts tab="pg"
+import { Pool } from "pg";
+export const client = new Pool({ connectionString: process.env.DATABASE_URL });
+```
+
+```ts tab="postgres.js"
+import postgres from "postgres";
+export const client = postgres(process.env.DATABASE_URL!);
+```
+
+```ts tab="Neon (edge)"
+import { neon } from "@neondatabase/serverless";
+export const client = neon(process.env.DATABASE_URL!); // one HTTPS request per query
+```
+
+```ts tab="PGlite"
+import { PGlite } from "@electric-sql/pglite";
+export const client = new PGlite("./data/pg"); // Postgres in WASM, for dev and tests
+```
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { PostgresDriver, postgresSessionStore } from "@teactjs/postgres";
+import { client } from "./db";
+import { App } from "./App";
+
+const pg = new PostgresDriver({ client }); // table "teact_storage", created on first use
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: pg })],
+  session: { store: postgresSessionStore(pg, { ttl: 30 * 24 * 3600_000 }) },
+});
+
+if (import.meta.main) bot.start();
+```
+
+If you run migrations yourself, print the DDL with `createTableSql("teact_storage")` and pass
+`autoMigrate: false`. Drizzle and Prisma users pass the underlying `pg` pool.
+
+</Tab>
+<Tab value="SQLite">
+
+```npm
+npm i @teactjs/sqlite @teactjs/storage
+```
+
+`bun:sqlite` needs no install. On Node, also install `better-sqlite3`.
+
+```ts tab="Open by path"
+import { SqliteDriver } from "@teactjs/sqlite";
+// bun:sqlite on Bun, better-sqlite3 on Node; WAL mode; folders created
+export const sqlite = new SqliteDriver({ path: "./data/bot.db" });
+```
+
+```ts tab="bun:sqlite handle"
+import { Database } from "bun:sqlite";
+import { SqliteDriver } from "@teactjs/sqlite";
+export const sqlite = new SqliteDriver({ db: new Database("./data/bot.db") });
+```
+
+```ts tab="better-sqlite3"
+import Database from "better-sqlite3";
+import { SqliteDriver } from "@teactjs/sqlite";
+export const sqlite = new SqliteDriver({ db: new Database("./data/bot.db") });
+```
+
+```tsx title="src/index.tsx"
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { sqliteSessionStore } from "@teactjs/sqlite";
+import { sqlite } from "./db";
+import { App } from "./App";
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: sqlite })],
+  session: { store: sqliteSessionStore(sqlite, { ttl: 7 * 24 * 3600_000 }) },
+});
+
+if (import.meta.main) bot.start();
+```
+
+`SqliteDriver` is synchronous, so it skips the per-update cache: every read hits the database and
+every write is committed before the setter returns. `sqlite.asAsync()` gives an `AsyncStorageDriver`
+view of the same database. SQLite needs a local file and a long-running process; it does not work on
+Workers or Vercel Edge.
+
+</Tab>
+<Tab value="MongoDB">
+
+```npm
+npm i @teactjs/mongodb @teactjs/storage mongodb
+```
+
+```tsx title="src/index.tsx"
+import { MongoClient } from "mongodb";
+import { createBot } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { MongoDriver, mongoSessionStore } from "@teactjs/mongodb";
+import { App } from "./App";
+
+// Connect once, at module scope, and reuse the client.
+const client = await new MongoClient(process.env.MONGO_URL!).connect();
+const db = client.db("mybot");
+
+const driver = new MongoDriver({ db }); // collection "teact_storage"
+await driver.ensureIndexes();           // TTL index, idempotent
+await new MongoDriver({ db, collectionName: "sessions" }).ensureIndexes();
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver })],
+  session: { store: mongoSessionStore({ db, collectionName: "sessions", ttl: 30 * 24 * 3600_000 }) },
+});
+
+if (import.meta.main) bot.start();
+```
+
+`MongoDriver` accepts a `collection`, a `db` (with optional `collectionName`) or a `client` (with
+optional `dbName` and `collectionName`). Values are stored as native BSON, so a `Date` comes back as a
+`Date` here but as a string on the JSON-based drivers.
+
+</Tab>
+<Tab value="D1">
+
+```npm
+npm i @teactjs/cloudflare @teactjs/storage
+```
+
+```jsonc title="wrangler.jsonc"
+{
+  // …
+  "d1_databases": [{ "binding": "DB", "database_name": "my-bot", "database_id": "<id>" }]
+}
+```
+
+```tsx title="src/index.tsx"
+import { createBot, getEnv } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
+import type { Env } from "./worker";
+import { App } from "./App";
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
+  session: { store: d1SessionStore(() => getEnv<Env>().DB, { ttl: 7 * 24 * 3600_000 }) },
+});
+```
+
+The worker passes its bindings with `bot.fetch(req, { token, secretToken, env })` and `getEnv()`
+reads them back while a request is handled. Every Cloudflare driver and store accepts a binding or a
+lazy getter. The `teact_storage` table is created on first use. Expired rows are hidden on read; call
+`driver.purgeExpired()` from a Cron Trigger to reclaim space. See
+[Deployment](/docs/guides/deployment#cloudflare-workers).
+
+</Tab>
+<Tab value="KV">
+
+```npm
+npm i @teactjs/cloudflare @teactjs/storage
+```
+
+```jsonc title="wrangler.jsonc"
+{
+  // …
+  "kv_namespaces": [{ "binding": "BOT_KV", "id": "<id>" }]
+}
+```
+
+```tsx title="src/index.tsx"
+import { createBot, getEnv } from "@teactjs/core";
+import { TelegramAdapter } from "@teactjs/telegram";
+import { storagePlugin } from "@teactjs/storage";
+import { KVDriver, kvSessionStore } from "@teactjs/cloudflare";
+import type { Env } from "./worker";
+import { App } from "./App";
+
+export const bot = createBot({
+  component: App,
+  adapter: new TelegramAdapter(),
+  plugins: [storagePlugin({ driver: new KVDriver(() => getEnv<Env>().BOT_KV, { namespace: "mybot:" }) })],
+  session: { store: kvSessionStore(() => getEnv<Env>().BOT_KV, { prefix: "session:" }) },
+});
+```
+
+KV is eventually consistent (writes can take about 60 s to reach other locations), allows about one
+write per second per key, has a 60-second minimum TTL and no atomic increment. Each update costs a
+`list` plus one `get` per key in the chat. Use it for settings and caches, and D1 for anything that
+changes per message.
+
+</Tab>
+</Tabs>
 
 ## How async drivers work with `useStorage`
 
@@ -38,18 +314,18 @@ and `teact add <db> --client <client>` adds one to an existing project. See the
 `AsyncStorageDriver` to `storagePlugin`, the plugin wraps it in a per-update cache:
 
 1. **Hydrate.** Before each update, it loads every key of the current chat
-   (`<platform>:<chatId>:*`) with one `entries(prefix)` call — e.g. one `SCAN` + `MGET` on Redis, one
+   (`<platform>:<chatId>:*`) with one `entries(prefix)` call: one `SCAN` + `MGET` on Redis, one
    `SELECT` on Postgres/D1, one `find()` on MongoDB.
 2. **Render.** Components read from that cache. A `set` updates the cache immediately (so the next
    render sees it) and queues the database write.
 3. **Flush.** Every queued write is awaited before the update finishes. On serverless this means
-   writes have landed before `bot.fetch()` resolves and the isolate freezes — no `waitUntil` needed.
-   If a write fails, the error surfaces at the end of the update (and is logged).
+   writes have landed before `bot.fetch()` resolves and the isolate freezes, with no `waitUntil`.
+   If a write fails, the error surfaces at the end of the update and is logged.
 
 Every update gets **its own cache**, holding only that chat's keys (plus your `preload` prefixes).
 Caches are never shared between chats, so one chat can't see, `clear()` or inherit write errors from
-another, and memory doesn't grow with the number of chats. Because the cache is re-hydrated on every
-update, a value written by another instance shows up on the next update.
+another. Because the cache is re-hydrated on every update, a value written by another instance shows
+up on the next update.
 
 Sync drivers (memory, file, SQLite) skip the cache: reads and writes go straight to the backend.
 
@@ -65,17 +341,17 @@ storagePlugin({ driver, preload: ["global:"] });
 const motd = useGlobalStorage().get<string>("global:motd");
 ```
 
-Keep `preload` prefixes small — they are fetched on every update. For larger or occasional queries,
+Keep `preload` prefixes small: they are fetched on every update. For larger or occasional queries,
 use `useStorageBackend()`, which returns the driver itself:
 
 ```tsx
 import { useQuery } from "@teactjs/core";
-import { useStorageBackend } from "@teactjs/storage";
+import { useStorageBackend, type AsyncStorageDriver } from "@teactjs/storage";
 
-function AllChats() {
-  const backend = useStorageBackend();
-  const { data } = useQuery({ key: "chat-count", fn: () => backend.keys("telegram:") });
-  // ...
+function ChatCount() {
+  const backend = useStorageBackend() as AsyncStorageDriver; // this bot uses an async driver
+  const { data } = useQuery({ key: "chat-count", fn: () => backend.keys("session:") });
+  return <Message text={`Chats with a session: ${data?.length ?? "…"}`} />;
 }
 ```
 
@@ -84,34 +360,69 @@ For queries that don't fit a key/value model, use the package's plugin and hook 
 
 ## TTL and counters
 
-**TTL.** `set(key, value, { ttl })` takes milliseconds. Every driver follows the same rule: a `ttl` of
-`0`, a negative number or `Infinity` (or no `ttl` at all) means the entry **never expires**.
+### The TTL rule
 
-**Atomic counters.** `AsyncStorageDriver` has an optional `incr(key, by?, { ttl? })` that adds `by`
-(default `1`) to a number in one atomic step and resolves the new value. A missing or expired key
-counts as `0`, and the `ttl` only applies when the increment creates the key, so a counter keeps its
-original expiry.
+`set(key, value, { ttl })` takes **milliseconds**. Every driver follows the same rule, checked by
+`runDriverConformance`: a `ttl` of `0`, a negative number or `Infinity`, or no `ttl` at all, means the
+entry **never expires**.
+
+How expiry is enforced differs per backend:
+
+| Driver | Expiry |
+| ------ | ------ |
+| `RedisDriver` | `SET … PX ms`, removed by Redis |
+| `PostgresDriver` | `expires_at` checked in SQL against `now()`; `purgeExpired()` deletes old rows |
+| `SqliteDriver` | `expires_at` in epoch ms, expired rows read as missing; `purgeExpired()` |
+| `MongoDriver` | `expiresAt` filtered on read; the TTL index from `ensureIndexes()` deletes in the background (about once a minute) |
+| `D1Driver` | exact, filtered on read; `purgeExpired()` from a Cron Trigger |
+| `KVDriver` | rounded up to whole seconds, at least 60 s |
+| `MemoryAsyncDriver` | exact, checked on read |
+
+Session stores pass their `ttl` on every write, so an active session keeps extending its lifetime.
+
+### Atomic counters
+
+`AsyncStorageDriver` has an optional `incr(key, by?, { ttl? })` that adds `by` (default `1`) to a
+number in one atomic step and resolves the new value. A missing or expired key counts as `0`, and the
+`ttl` only applies when the increment creates the key, so a counter keeps its original expiry.
 
 | Driver | `incr()` |
 | ------ | -------- |
-| `RedisDriver` | ✓ (one Lua script per call, every client) |
-| `PostgresDriver` | ✓ (`UPSERT … RETURNING`) |
-| `SqliteDriver` / `D1Driver` | ✓ (`UPSERT … RETURNING`) |
-| `MongoDriver` | ✓ (`$inc`) |
-| `KVDriver` | ✗ (KV has no atomic primitive) |
+| `RedisDriver` | ✓ one Lua script per call, every client |
+| `PostgresDriver` | ✓ `UPSERT … RETURNING` |
+| `SqliteDriver` / `D1Driver` | ✓ `UPSERT … RETURNING` |
+| `MongoDriver` | ✓ `$inc` in one `findOneAndUpdate` |
+| `MemoryAsyncDriver` | ✓ (in process) |
+| `KVDriver` | ✗ KV has no atomic primitive |
 
-Use it through `useStorageBackend()` for your own counters. The `rateLimit` and `analytics` plugins
-from [`@teactjs/plugins`](/docs/packages/plugins) use it to stay exact across instances.
+Call it through the driver. Because button handlers are not awaited, run the increment where it is
+awaited: a command handler, a middleware, or a script.
 
-## Closing clients
+```tsx title="src/index.tsx"
+import { RedisDriver } from "@teactjs/redis";
 
-Drivers and plugins **never close a client you pass in** — you own it, and other code may share it.
-Opt in when Teact should close it on `bot.stop()`:
+const driver = new RedisDriver({ client: redis });
 
-- Drivers: `closeClient: true` (`RedisDriver`, `PostgresDriver`, `MongoDriver`). `SqliteDriver`
-  closes a database it opened from `path`, and one you passed in only with `closeDb: true`.
-- Plugins: `closeOnStop: true` (`redisPlugin`, `postgresPlugin`, `mongoPlugin`). `sqlitePlugin`
-  closes a database it opened from `path`; override either way with `closeOnStop`.
+createBot({
+  // ...
+  plugins: [storagePlugin({ driver })],
+  commands: {
+    visit: {
+      description: "Count visits",
+      handler: async (ctx) => {
+        // Daily counter that expires 48 h after the first visit of the day
+        const day = new Date().toISOString().slice(0, 10);
+        const n = await driver.incr(`visits:${day}`, 1, { ttl: 48 * 3600_000 });
+        await ctx.reply(`Visitor #${n} today`);
+      },
+    },
+  },
+});
+```
+
+The `rateLimit` (with `strategy: "fixed"`) and `analytics` plugins from
+[`@teactjs/plugins`](/docs/packages/plugins) use `incr()` to stay exact across instances. They only
+use it on async drivers, so pass `sqlite.asAsync()` rather than the sync `SqliteDriver` to them.
 
 ## Durable sessions
 
@@ -122,7 +433,7 @@ serverless isolates. Every database package exports a session store:
 | ------- | ------------- |
 | `@teactjs/redis` | `redisSessionStore({ client, namespace?, prefix?, ttl? })` |
 | `@teactjs/postgres` | `postgresSessionStore(driverOrOptions, { prefix?, ttl? })` |
-| `@teactjs/sqlite` | `sqliteSessionStore(driverOrOptions, { prefix?, ttl? })` |
+| `@teactjs/sqlite` | `sqliteSessionStore(driverOrOptionsOrDb, { prefix?, ttl? })` |
 | `@teactjs/mongodb` | `mongoSessionStore({ db, collectionName?, prefix?, ttl? })` |
 | `@teactjs/cloudflare` | `d1SessionStore(db, { prefix?, ttl? })`, `kvSessionStore(kv, { prefix?, ttl? })` |
 
@@ -136,162 +447,255 @@ createBot({
 });
 ```
 
+Sessions are stored under `<prefix><platform>:<chatId>`, for example `session:telegram:123456`.
 Session writes are awaited before the update completes. A durable session store also keeps the
-user's chosen language when you use [i18n](/docs/guides/i18n) persistence.
+user's chosen language when you use [i18n](/docs/guides/i18n) persistence, and the tokens of
+[`useAuthSession`](/docs/guides/auth).
 
-## Examples
+## Closing clients
 
-### SQLite (single server)
+Drivers and plugins **never close a client you pass in**: you own it, and other code may share it.
+Opt in when Teact should close it on `bot.stop()`:
 
-```ts
-import { createBot } from "@teactjs/core";
-import { storagePlugin } from "@teactjs/storage";
-import { SqliteDriver, sqliteSessionStore } from "@teactjs/sqlite";
+- **Drivers**: `closeClient: true` (`RedisDriver`, `PostgresDriver`, `MongoDriver`). The storage
+  plugin calls an async driver's `close()` when the bot stops.
+- **SQLite**: `SqliteDriver.close()` closes a database it opened from `path`, and one you passed in
+  only with `closeDb: true`. The storage plugin does not call `close()` on sync drivers, so register
+  `sqlitePlugin`, which closes a database it opened (override with `closeOnStop`), or close it yourself.
+- **Plugins**: `closeOnStop: true` (`redisPlugin`, `postgresPlugin`, `mongoPlugin`).
 
-const sqlite = new SqliteDriver({ path: "./data/bot.db" });
-
-export const bot = createBot({
-  component: App,
-  plugins: [storagePlugin({ driver: sqlite })],
-  session: { store: sqliteSessionStore(sqlite) },
-});
-```
-
-### Redis
+Closing a Redis client is idempotent across Teact, so a client shared by a driver with
+`closeClient: true` and `redisPlugin({ closeOnStop: true })` is closed once.
 
 ```ts
-import Redis from "ioredis";
-import { RedisDriver, redisSessionStore } from "@teactjs/redis";
-
-const redis = new Redis(process.env.REDIS_URL!);
-
-export const bot = createBot({
-  component: App,
-  plugins: [storagePlugin({ driver: new RedisDriver({ client: redis, namespace: "mybot:" }) })],
-  session: { store: redisSessionStore({ client: redis, namespace: "mybot:" }) },
-});
+const driver = new RedisDriver({ client: redis, closeClient: true });
+// bot.stop() → storagePlugin.onStop → driver.close() → redis.quit()
 ```
-
-On the edge, swap the client for `Redis.fromEnv()` from `@upstash/redis`.
-
-### Postgres
-
-```ts
-import postgres from "postgres";
-import { PostgresDriver, postgresSessionStore } from "@teactjs/postgres";
-
-const pg = new PostgresDriver({ client: postgres(process.env.DATABASE_URL!) });
-
-export const bot = createBot({
-  component: App,
-  plugins: [storagePlugin({ driver: pg })],
-  session: { store: postgresSessionStore(pg, { ttl: 30 * 24 * 3600_000 }) },
-});
-```
-
-On the edge, use `neon(process.env.DATABASE_URL!)` from `@neondatabase/serverless` as the client.
-
-### MongoDB
-
-```ts
-import { MongoClient } from "mongodb";
-import { MongoDriver, mongoSessionStore } from "@teactjs/mongodb";
-
-const client = await new MongoClient(process.env.MONGO_URL!).connect();
-const db = client.db("mybot");
-const driver = new MongoDriver({ db });
-await driver.ensureIndexes();
-
-export const bot = createBot({
-  component: App,
-  plugins: [storagePlugin({ driver })],
-  session: { store: mongoSessionStore({ db, collectionName: "sessions" }) },
-});
-```
-
-### Cloudflare D1
-
-```ts title="src/index.tsx"
-import { createBot, getEnv } from "@teactjs/core";
-import { D1Driver, d1SessionStore } from "@teactjs/cloudflare";
-import type { Env } from "./worker";
-
-export const bot = createBot({
-  component: App,
-  adapter: new TelegramAdapter(),
-  plugins: [storagePlugin({ driver: new D1Driver(() => getEnv<Env>().DB) })],
-  session: { store: d1SessionStore(() => getEnv<Env>().DB) },
-});
-```
-
-The worker passes its bindings with `bot.fetch(req, { token, secretToken, env })`; `getEnv()` reads
-them back. See [Deployment](/docs/guides/deployment#example-cloudflare-d1-storage-and-sessions).
 
 ## Writing your own driver
 
 Implement `AsyncStorageDriver` from `@teactjs/storage` and mark it with `async: true`:
 
-```ts
+| Method | Required | Contract |
+| ------ | -------- | -------- |
+| `get(key)` | ✓ | Value or `undefined`. Expired entries read as missing. |
+| `set(key, value, { ttl? })` | ✓ | Upsert. `ttl` in ms; `0`, negative or `Infinity` means no expiry. |
+| `delete(key)` | ✓ | Deleting a missing key is a no-op. |
+| `has(key)` | ✓ | `true` for a stored `null`. |
+| `keys(prefix?)` | ✓ | Keys starting with `prefix`, matched literally. |
+| `clear(prefix?)` | ✓ | Only keys under `prefix`; everything without one. |
+| `entries(prefix)` | optional | `[key, value][]` in one query. Runs on every update. |
+| `incr(key, by?, { ttl? })` | optional | Atomic; `ttl` only when the key is created. Only implement it if it is truly atomic. |
+| `close()` | optional | Release connections; called from the plugin's `onStop`. |
+
+### Example: a libSQL / Turso driver
+
+A complete driver for [libSQL](https://github.com/tursodatabase/libsql-client-ts) (Turso, or a local
+file), built on `@libsql/client`:
+
+```ts title="src/libsql-driver.ts"
+import type { Client } from "@libsql/client";
 import type { AsyncStorageDriver, SetOptions } from "@teactjs/storage";
 
-export class MyDriver implements AsyncStorageDriver {
+const TABLE = "teact_storage";
+const LIVE = "(expires_at IS NULL OR expires_at > ?)";
+
+/** Escape LIKE metacharacters so prefixes match literally. */
+const likePrefix = (prefix: string) => prefix.replace(/[\\%_]/g, (c) => `\\${c}`) + "%";
+
+/** The shared TTL rule: 0, negative, Infinity or missing = no expiry. */
+const expiresAt = (opts?: SetOptions) =>
+  opts?.ttl && opts.ttl > 0 && Number.isFinite(opts.ttl) ? Date.now() + opts.ttl : null;
+
+export class LibsqlDriver implements AsyncStorageDriver {
   readonly async = true as const;
+  private ready: Promise<unknown> | undefined;
 
-  async get<T>(key: string): Promise<T | undefined> { /* ... */ }
-  async set<T>(key: string, value: T, opts?: SetOptions): Promise<void> { /* opts.ttl in ms */ }
-  async delete(key: string): Promise<void> { /* ... */ }
-  async has(key: string): Promise<boolean> { /* ... */ }
-  async keys(prefix = ""): Promise<string[]> { /* keys starting with prefix */ }
-  async clear(prefix = ""): Promise<void> { /* only keys starting with prefix */ }
+  constructor(
+    private readonly client: Client,
+    private readonly opts: { closeClient?: boolean } = {},
+  ) {}
 
-  // Optional but recommended: load a whole prefix in one query.
-  // Without it, the plugin falls back to keys(prefix) + one get() per key.
-  async entries(prefix: string): Promise<Array<[string, unknown]>> { /* ... */ }
+  /** Create the table once, lazily. */
+  private init() {
+    return (this.ready ??= this.client.execute(
+      `CREATE TABLE IF NOT EXISTS ${TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)`,
+    ));
+  }
 
-  // Optional: atomic increment, if the backend has an atomic primitive.
-  // opts.ttl applies only when the increment creates the key.
-  async incr(key: string, by = 1, opts?: SetOptions): Promise<number> { /* ... */ }
+  /** WHERE clause for "key starts with prefix" (LIKE is case-insensitive, so also compare exactly). */
+  private byPrefix(prefix: string) {
+    return {
+      where: `key LIKE ? ESCAPE '\\' AND substr(key, 1, ?) = ? AND ${LIVE}`,
+      args: [likePrefix(prefix), prefix.length, prefix, Date.now()],
+    };
+  }
 
-  // Optional: release connections; storagePlugin calls it when the bot stops.
-  // Don't close a client the user passed in unless they asked you to.
-  async close(): Promise<void> { /* ... */ }
+  async get<T>(key: string): Promise<T | undefined> {
+    await this.init();
+    const { rows } = await this.client.execute({
+      sql: `SELECT value FROM ${TABLE} WHERE key = ? AND ${LIVE}`,
+      args: [key, Date.now()],
+    });
+    return rows.length ? (JSON.parse(String(rows[0].value)) as T) : undefined;
+  }
+
+  async set<T>(key: string, value: T, opts?: SetOptions): Promise<void> {
+    await this.init();
+    await this.client.execute({
+      sql: `INSERT INTO ${TABLE} (key, value, expires_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at`,
+      args: [key, JSON.stringify(value), expiresAt(opts)],
+    });
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.init();
+    await this.client.execute({ sql: `DELETE FROM ${TABLE} WHERE key = ?`, args: [key] });
+  }
+
+  async has(key: string): Promise<boolean> {
+    await this.init();
+    const { rows } = await this.client.execute({
+      sql: `SELECT 1 FROM ${TABLE} WHERE key = ? AND ${LIVE}`,
+      args: [key, Date.now()],
+    });
+    return rows.length > 0;
+  }
+
+  async keys(prefix = ""): Promise<string[]> {
+    await this.init();
+    const { where, args } = this.byPrefix(prefix);
+    const { rows } = await this.client.execute({ sql: `SELECT key FROM ${TABLE} WHERE ${where}`, args });
+    return rows.map((r) => String(r.key));
+  }
+
+  async clear(prefix = ""): Promise<void> {
+    await this.init();
+    await this.client.execute({
+      sql: `DELETE FROM ${TABLE} WHERE key LIKE ? ESCAPE '\\' AND substr(key, 1, ?) = ?`,
+      args: [likePrefix(prefix), prefix.length, prefix],
+    });
+  }
+
+  async entries(prefix: string): Promise<Array<[string, unknown]>> {
+    await this.init();
+    const { where, args } = this.byPrefix(prefix);
+    const { rows } = await this.client.execute({ sql: `SELECT key, value FROM ${TABLE} WHERE ${where}`, args });
+    return rows.map((r) => [String(r.key), JSON.parse(String(r.value))]);
+  }
+
+  /** One atomic statement. An expired row counts as missing and takes the new ttl. */
+  async incr(key: string, by = 1, opts?: SetOptions): Promise<number> {
+    await this.init();
+    const { rows } = await this.client.execute({
+      sql: `INSERT INTO ${TABLE} (key, value, expires_at) VALUES (?1, ?2, ?3)
+            ON CONFLICT(key) DO UPDATE SET
+              value = CASE WHEN expires_at IS NOT NULL AND expires_at <= ?4
+                           THEN excluded.value ELSE CAST(value AS NUMERIC) + ?5 END,
+              expires_at = CASE WHEN expires_at IS NOT NULL AND expires_at <= ?4
+                                THEN excluded.expires_at ELSE expires_at END
+            RETURNING value`,
+      args: [key, JSON.stringify(by), expiresAt(opts), Date.now(), by],
+    });
+    return Number(rows[0].value);
+  }
+
+  async close(): Promise<void> {
+    if (this.opts.closeClient) this.client.close();
+  }
 }
 ```
 
-Guidelines:
+Use it like any other driver:
 
-- Store values as JSON (or a native document type) and return them unchanged: strings, numbers,
-  booleans, `null`, arrays and objects must round-trip.
-- Match prefixes **literally** — escape `%`/`_` in SQL `LIKE`, glob characters in Redis `SCAN`, regex
-  characters in MongoDB.
-- `clear(prefix)` must only delete keys under that prefix; other chats' data lives in the same store.
-- Implement `entries` with a single query; it runs on every update.
-- Treat a `ttl` of `0`, a negative number or `Infinity` as "no expiry".
-- Only implement `incr` if it is truly atomic; callers fall back to read-modify-write without it.
+```ts
+import { createClient } from "@libsql/client";
+import { storagePlugin, createSessionStore } from "@teactjs/storage";
+import { LibsqlDriver } from "./libsql-driver";
 
-A synchronous backend can implement the simpler `StorageDriver` interface instead and skip the cache
-entirely.
+const driver = new LibsqlDriver(
+  createClient({ url: process.env.TURSO_URL!, authToken: process.env.TURSO_TOKEN }),
+);
 
-### Test it with `runDriverConformance`
-
-`runDriverConformance` runs the shared behaviour tests that the built-in drivers use. Pass your test
-runner's functions so the package never imports one itself:
-
-```ts title="my-driver.test.ts"
-import { describe, test, expect } from "bun:test";
-import { runDriverConformance } from "@teactjs/storage";
-import { MyDriver } from "./my-driver";
-
-runDriverConformance("MyDriver", () => new MyDriver(/* a fresh, empty store */), {
-  describe,
-  test,
-  expect,
-  // skipTtl: true, // if the backend can't expire keys quickly in-process
+createBot({
+  // ...
+  plugins: [storagePlugin({ driver })],
+  session: { store: createSessionStore(driver, { ttl: 30 * 24 * 3600_000 }) },
 });
 ```
 
-`MemoryAsyncDriver` from `@teactjs/storage` is a compact reference implementation (it honours `ttl`)
-and a handy async driver for your own bot tests.
+### Guidelines
 
-Wrap the driver in a plugin if you want to expose the client to components — see
+- Store values as JSON (or a native document type) and return them unchanged: strings, numbers,
+  booleans, `null`, arrays and objects must round-trip.
+- Match prefixes **literally**: escape `%`/`_` in SQL `LIKE`, glob characters in Redis `SCAN`, regex
+  characters in MongoDB.
+- `clear(prefix)` must only delete keys under that prefix; other chats' data lives in the same store.
+- Implement `entries` with a single query; it runs on every update.
+- Only implement `incr` if it is truly atomic; callers fall back to read-modify-write without it.
+- Don't close a client the user passed in unless they asked you to.
+
+A synchronous backend can implement the simpler `StorageDriver` interface instead (`get`, `set`,
+`delete`, `has`, `clear`, `keys`, all synchronous) and skip the cache entirely.
+
+### Test it with `runDriverConformance`
+
+`runDriverConformance(name, make, { describe, test, expect, skipTtl? })` runs the shared behaviour
+tests that the built-in drivers use: missing keys, JSON round-trips, overwrite and delete, prefix
+filtering for `keys` and `entries`, literal matching of `%_*?[]`, `clear(prefix)`, the TTL rule, TTL
+expiry and, when present, atomic `incr` (20 concurrent increments) that keeps its first TTL. Pass your
+test runner's functions so the package never imports one itself, and a factory that returns a
+**fresh, empty** driver:
+
+```ts title="src/libsql-driver.test.ts"
+import { describe, test, expect } from "bun:test";
+import { createClient } from "@libsql/client";
+import { runDriverConformance } from "@teactjs/storage";
+import { LibsqlDriver } from "./libsql-driver";
+
+runDriverConformance(
+  "LibsqlDriver",
+  () => new LibsqlDriver(createClient({ url: ":memory:" })),
+  {
+    describe,
+    test,
+    expect,
+    // skipTtl: true, // for backends that can't expire keys within ~100 ms
+  },
+);
+```
+
+```bash
+bun test src/libsql-driver.test.ts
+```
+
+It works with Vitest and Jest too: pass their `describe`, `test` and `expect`. `MemoryAsyncDriver`
+from `@teactjs/storage` is a compact reference implementation and a handy async driver for your own
+bot tests. Wrap the driver in a plugin if you want to expose the client to components; see
 [`@teactjs/plugin-sdk`](/docs/packages/plugin-sdk).
+
+## Gotchas
+
+<Callout type="warn" title="Run one schema per bot">
+Every SQL driver defaults to a `teact_storage` table, and keys start with the platform and chat id.
+Two bots sharing one database will see each other's chats. Give each bot its own `table`, schema or
+Redis `namespace`.
+</Callout>
+
+- **TCP clients don't run on the edge.** ioredis, node-redis, `pg`, postgres.js and `mongodb` need
+  Node or Bun. Use Upstash, Neon's HTTP driver or D1 on Workers and Vercel Edge.
+- **Create clients once.** On serverless, build the client at module scope so warm isolates reuse it.
+  Never connect per request.
+- **Use your provider's pooler** for Postgres on serverless functions (Supabase transaction pooler,
+  Neon pooled connection string).
+- **Dates differ by backend.** MongoDB returns `Date` objects, the JSON drivers return strings.
+
+## Related
+
+<Cards>
+  <Card title="Storage" href="/docs/guides/storage" description="useStorage, useGlobalStorage, useStorageBackend and the per-update cache." />
+  <Card title="Deployment" href="/docs/guides/deployment" description="Edge checklist, getEnv bindings and serverless databases." />
+  <Card title="@teactjs/redis" href="/docs/packages/redis" description="Every option of the Redis driver, store and plugin." />
+  <Card title="@teactjs/postgres" href="/docs/packages/postgres" description="Postgres driver API, schema and migrations." />
+</Cards>

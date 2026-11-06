@@ -1,59 +1,169 @@
 ---
 title: Forms
-description: Schema-driven multi-field collection with useForm and the Form component.
+description: Collect a fixed set of fields with useForm and the Form component — text and choice fields, dynamic prompts, function or Zod validation, editing, and saving the result.
 ---
 
+A form asks for a fixed list of fields one at a time and gives you a typed `data` object at the
+end. Each field is a text question or a set of choice buttons, with optional validation. Use a
+form for sign-ups, profiles, orders and settings; use a
+[conversation](/docs/guides/conversations) when you need custom steps or branching.
 
-Forms collect a set of named fields with validation. Each field has a `prompt`
-(text, or a function of the data so far), optional `options` for choice fields,
-and an optional `validate` (a function returning `true | string`, or a
-Zod-compatible schema).
+`useForm` and `<Form>` come from `@teactjs/core`. They are built on `useConversation`, so they
+follow the same rules for answers, state and messages.
 
-## useForm
+## A first form
 
-```tsx
-import { useForm } from "@teactjs/core";
-import { Message } from "@teactjs/ui";
+```tsx title="src/screens/TrainerProfile.tsx"
+import { useForm, useNavigate } from "@teactjs/core";
+import { Message, InlineKeyboard, ButtonRow, Button } from "@teactjs/ui";
+import { z } from "zod";
 
-function Signup() {
+export function TrainerProfile() {
+  const navigate = useNavigate();
+
   const form = useForm({
     name: {
-      prompt: "What's your name?",
-      validate: (v) => v.trim().length > 1 || "Too short",
+      prompt: "What's your trainer name?",
+      validate: z.string().min(2, "Name must be at least 2 characters"),
     },
     email: {
-      prompt: "Your email?",
-      validate: (v) => /\S+@\S+\.\S+/.test(v) || "Invalid email",
+      prompt: "What's your email address?",
+      validate: z.email("Please enter a valid email address"),
     },
-    region: { prompt: "Pick a region:", options: [["Kanto", "Johto"]] },
+    region: {
+      prompt: (d) => `Nice to meet you, ${d.name}! Pick your region:`,
+      options: [["🌿 Kanto", "🌊 Johto"], ["🔥 Hoenn", "⚡ Sinnoh"]],
+    },
   });
 
   return form.render(() => (
-    <Message text={`${form.data.name} <${form.data.email}> — ${form.data.region}`} />
+    <Message text={`🎮 Trainer profile\n\nName: ${form.data.name}\nEmail: ${form.data.email}\nRegion: ${form.data.region}`}>
+      <InlineKeyboard>
+        <ButtonRow>
+          <Button text="✏️ Edit name" onClick={() => form.goTo("name")} />
+          <Button text="✏️ Edit region" onClick={() => form.goTo("region")} />
+        </ButtonRow>
+        <ButtonRow>
+          <Button text="🔄 Start over" onClick={() => form.reset()} />
+          <Button text="🏠 Menu" onClick={() => navigate("/")} />
+        </ButtonRow>
+      </InlineKeyboard>
+    </Message>
   ));
 }
 ```
 
-`form.render(onComplete)` renders the current field and calls `onComplete` when
-all fields are collected. Read answers from `form.data`; check `form.complete`;
-navigate with `form.back()`, `form.goTo(key)`, and `form.reset()`.
+<TelegramPreview user="/profile" text="What's your trainer name?" />
 
-## Form component
+<TelegramPreview user="Ash" text="What's your email address?" />
+
+<TelegramPreview user="ash@" text={"⚠️ Please enter a valid email address\n\nWhat's your email address?"} caption="Validation error" />
+
+<TelegramPreview user="ash@example.com" text="Nice to meet you, Ash! Pick your region:" buttons={[["🌿 Kanto", "🌊 Johto"], ["🔥 Hoenn", "⚡ Sinnoh"]]} />
+
+<TelegramPreview edited text={"🎮 Trainer profile\n\nName: Ash\nEmail: ash@example.com\nRegion: 🌿 Kanto"} buttons={[["✏️ Edit name", "✏️ Edit region"], ["🔄 Start over", "🏠 Menu"]]} caption="After tapping Kanto" />
+
+## How it works
+
+<Steps>
+<Step>
+### The first unanswered field is shown
+
+Fields are asked in the order you declare them. The field list is read once, on the first render.
+</Step>
+<Step>
+### The user answers
+
+A text field takes the next text message the chat sends. A field with `options` shows inline
+buttons and takes a tap; text typed instead is ignored and the question is shown again.
+</Step>
+<Step>
+### The answer is validated
+
+If `validate` rejects the text, the question is shown again with `⚠️ <error>` above it. Button
+answers are not validated: every option is valid.
+</Step>
+<Step>
+### The form completes
+
+When every field has an answer, `form.render(onComplete)` returns `onComplete()` and
+`form.complete` is `true`.
+</Step>
+</Steps>
+
+A question that follows a typed answer is sent as a new message; one that follows a button press
+edits the message with the buttons (see [Edit or send](/docs/guides/components#edit-or-send)).
+
+## Field reference
+
+<TypeTable
+  type={{
+    prompt: { type: 'string | ((data: Readonly<Record<string, string>>) => string)', required: true, description: 'The question. A function receives the answers so far, so later questions can use earlier ones.' },
+    options: { type: 'string[][]', description: 'Rows of choice buttons. The label is also the stored value. When set, the field waits for a tap instead of text.' },
+    validate: { type: 'Validator', description: 'For text fields: a function `(value) => true | "error"`, or a schema with `.safeParse()` such as Zod.' },
+  }}
+/>
+
+All values are stored as strings. Convert them when you use them (`Number(form.data.age)`).
+
+## FormResult reference
+
+`useForm(schema)` returns:
+
+<TypeTable
+  type={{
+    render: { type: '(onComplete?: () => ReactElement) => ReactElement | null', description: 'The current field, or `onComplete()` once complete. Without a callback it returns `null` when complete.' },
+    data: { type: 'Readonly<Record<K, string>>', description: 'Answers so far, keyed by field name.' },
+    complete: { type: 'boolean', description: 'True when every field has an answer.' },
+    back: { type: '() => void', description: 'Clear the previous answered field so it is asked again.' },
+    goTo: { type: '(key: K) => void', description: 'Clear one field so it is asked again; the form then returns to the first unanswered field.' },
+    canGoBack: { type: '() => boolean', description: 'Whether there is a previous answered field.' },
+    reset: { type: '() => void', description: 'Clear all answers and start over.' },
+  }}
+/>
+
+Field names are typed: `form.data.name` and `form.goTo("name")` only accept keys from your
+schema.
+
+## Validation
+
+```tsx
+import { z } from "zod";
+
+useForm({
+  // Function: return true, or the message to show
+  username: {
+    prompt: "Pick a username:",
+    validate: (v) => /^[a-z0-9_]{3,20}$/.test(v) || "3–20 lowercase letters, digits or _",
+  },
+  // Zod (or any object with safeParse): the first issue's message is shown
+  age: { prompt: "How old are you?", validate: z.coerce.number().int().min(13, "You must be 13 or older") },
+  website: { prompt: "Your website?", validate: z.url("Please send a full URL, like https://…") },
+});
+```
+
+A schema without an issue message shows "Invalid input". The validator only checks the value; the
+stored answer is always the original text.
+
+## The Form component
+
+`<Form>` renders the same flow in JSX. Pass a `useForm` result as `value` (recommended, because you
+keep typed access to `form.data` and the actions), or declare fields as children:
 
 ```tsx
 import { Form } from "@teactjs/core";
 import { Message } from "@teactjs/ui";
 
-// With the hook (recommended):
+// With the hook
 <Form value={form}>
   <Form.Complete>
     <Message text={`Hello ${form.data.name}`} />
   </Form.Complete>
 </Form>;
 
-// Self-contained (fields as children):
+// Self-contained
 <Form>
-  <Form.Field name="name" prompt="Name?" />
+  <Form.Field name="name" prompt="Name?" validate={(v) => v.length > 1 || "Too short"} />
   <Form.Field name="region" prompt="Region?" options={[["Kanto", "Johto"]]} />
   <Form.Complete>
     {(form) => <Message text={`${form.data.name} from ${form.data.region}`} />}
@@ -61,22 +171,112 @@ import { Message } from "@teactjs/ui";
 </Form>;
 ```
 
+| Child | Props |
+| --- | --- |
+| `Form.Field` | `name`, plus the field props `prompt`, `options?`, `validate?` |
+| `Form.Complete` | `children`: a node, or `(form) => ReactElement`. Without it, completion shows a "✓" message |
+
+Components inside `<Form>` can read the state with `useFormContext()`:
+
+```tsx
+import { useFormContext } from "@teactjs/core";
+
+function SummaryButtons() {
+  const form = useFormContext<"name" | "region">();
+  return (
+    <InlineKeyboard>
+      <Button text="✏️ Region" onClick={() => form.goTo("region")} />
+    </InlineKeyboard>
+  );
+}
+```
+
 ## Forms vs conversations
 
-- **Conversations** — a linear wizard, one question at a time; great for chat UX
-  and imperative async flows.
-- **Forms** — a fixed schema of related fields with per-field validation and a
-  structured `data` object at the end.
+| | `useForm` | `useConversation` |
+| --- | --- | --- |
+| Field types | Text, or string choice buttons | Text, buttons with separate label and value, custom `render` steps |
+| Dynamic prompts | `prompt: (data) => string` | Imperative mode with `has` / `prompt` / `ask` |
+| Typing during a choice | Ignored, question shown again | "Please pick an option from the buttons above." |
+| Best for | Fixed data collection | Wizards, confirmations, branching |
 
-Combine with [Storage](/docs/guides/storage) to persist drafts or results.
+## Recipes
 
-## Do / Don't
+### Save the result
 
-- **Do** define each field with `prompt` (+ optional `options` / `validate`) —
-  not a `type`/`required` shape.
-- **Do** return `form.render(() => <Done />)` so the current field and completion
-  are handled for you.
-- **Don't** read `form.data.field` before `form.complete` — the value isn't set
-  until the field is answered.
-- **Don't** hand-concatenate user input into HTML — let `<Message>` formatting
-  escape it (see [Components](/docs/guides/components)).
+Store the answers from a button on the summary, then move on. `useStorage` from
+`@teactjs/storage` keeps them across restarts:
+
+```tsx title="src/screens/Signup.tsx"
+import { useForm, useNavigate } from "@teactjs/core";
+import { useStorage } from "@teactjs/storage";
+import { Message, InlineKeyboard, Button } from "@teactjs/ui";
+
+export function Signup() {
+  const navigate = useNavigate();
+  const [, setProfile] = useStorage<Record<string, string> | null>("profile", null);
+
+  const form = useForm({
+    name: { prompt: "Your name?" },
+    city: { prompt: (d) => `Where do you live, ${d.name}?` },
+  });
+
+  return form.render(() => (
+    <Message text={`${form.data.name} from ${form.data.city}. Save?`}>
+      <InlineKeyboard>
+        <Button
+          text="💾 Save"
+          onClick={() => {
+            setProfile({ ...form.data });
+            navigate("/profile");
+          }}
+        />
+        <Button text="✏️ Change city" onClick={() => form.goTo("city")} />
+      </InlineKeyboard>
+    </Message>
+  ));
+}
+```
+
+### Order form with a computed total
+
+```tsx
+const PRICES: Record<string, number> = { Small: 4, Medium: 5, Large: 6 };
+
+const form = useForm({
+  size: { prompt: "Which size?", options: [["Small", "Medium", "Large"]] },
+  qty: {
+    prompt: (d) => `How many ${d.size} coffees?`,
+    validate: (v) => (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 20) || "Send a number from 1 to 20",
+  },
+});
+
+return form.render(() => {
+  const total = PRICES[form.data.size] * Number(form.data.qty);
+  return <Message text={`${form.data.qty} × ${form.data.size} = $${total.toFixed(2)}`} />;
+});
+```
+
+<TelegramPreview user="3" text="3 × Medium = $15.00" />
+
+## Gotchas
+
+<Callout type="warn" title="Progress is in memory">
+  Answers are React state in the chat's component tree. A `/command`, a route button or a restart
+  discards an unfinished form, and on serverless each update may reach a fresh instance. Run forms
+  on a long-running process, or save partial answers to the session as you go.
+</Callout>
+
+- `form.data.field` is `undefined` until that field is answered. Read it in the completion callback
+  or check `form.complete` first.
+- The field list is read on the first render; adding fields later has no effect.
+- Don't build HTML from user answers yourself. Put them in formatting components, which escape them
+  (see [HTML escaping](/docs/guides/components#html-escaping)).
+
+## Related
+
+<Cards>
+  <Card title="Conversations" href="/docs/guides/conversations" description="Custom steps, branching and imperative flows." />
+  <Card title="Storage" href="/docs/guides/storage" description="Persist form results per user." />
+  <Card title="Components" href="/docs/guides/components" description="Messages and keyboards for the summary screen." />
+</Cards>
